@@ -1,0 +1,5 @@
+# Vague 48 — 2026-10-03. Ouverte par P746 : nicaragua et pakistan meurent sur `[shim] function_call: unknown target
+# 0x4084a0` puis `[WATCHDOG crash]` (ecx=0x4084a0). 0x4084a0 est un relais d'edition incrementale (`jmp 0x68dca0`,
+# sub_68dca0 deja liftee) jamais appele directement : 0x5bfa57 le range comme rappel (`mov [esi+0x24], 0x4084a0`),
+# 0x57914c l'appelle par `call ecx`. Seule reference du .text : le lift ne l'a jamais vu.
+0x4084a0  # relais vers sub_68dca0, rappel range en 0x5bfa57

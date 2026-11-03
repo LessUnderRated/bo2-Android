@@ -1,0 +1,16 @@
+7d459f   # tail of sub_7d4360 after `call 0x4ed080` — [MISSING] in runs/tls0_1, first reached once the VM stopped leaking
+# Resume blocks for the rsqrtps/rcpps emulator (emulate_rsqrtps_and_resume needs the
+# NEXT instruction registered). Static scan of every catalogued function: 5 rsqrtps +
+# 1 rcpps sites, only 0x780499 was registered (tools/unwind_extra_vas.txt).
+# runs/nn_1 aborted in __remill_error at 0x705fdf.
+6bd6b1
+6bd6c7
+705fdf
+780416
+7801e4
+# SQRTPS resume blocks (remill has no SQRTPS semantics either; same emulator).
+533cd0
+533d1c
+6bd9b0
+6bda2a
+6bda98

@@ -1,0 +1,152 @@
+# Wave 5 — the audio DSP's COMPUTED-JMP filter tables (0x926a00-0x927580).
+#
+# Four unrolled multiply-accumulate chains (two fixed-point, two x87) that a
+# `jmp edx` enters at a computed offset chosen by the filter length. The entry
+# offsets are NOT branch targets in the byte stream, so a linear branch-leader
+# sweep cannot see them -- wave 4 harvested this region and still missed every
+# one of them. The run died on `__remill_jump: unknown target 0x927547`, which
+# is entry n=29 of chain B.
+#
+# Each set is derived from the guest's own address arithmetic rather than from
+# a sweep, so it is complete by construction:
+#   A  jmp edx @0x9270a2          edx = 0x9271c4 - 9*n,   n = 1..32
+#   B  jmp edx @0x927440/0x927574 edx = 0x927562 - 9*n,   n = 1..32
+#   C  jmp edx @0x926a45/0x926bc2 edx = 0x926bbb - 11*n,  n = 1..33  (-9 at n=33:
+#                                   the first tap needs a disp32, so it is 9
+#                                   bytes longer than the other 32)
+#   D  jmp edx @0x926bea/0x926d56 edx = 0x926d4c - 11*n,  n = 1..32
+926a47   # C n=33
+926a5b   # C n=32
+926a66   # C n=31
+926a71   # C n=30
+926a7c   # C n=29
+926a87   # C n=28
+926a92   # C n=27
+926a9d   # C n=26
+926aa8   # C n=25
+926ab3   # C n=24
+926abe   # C n=23
+926ac9   # C n=22
+926ad4   # C n=21
+926adf   # C n=20
+926aea   # C n=19
+926af5   # C n=18
+926b00   # C n=17
+926b0b   # C n=16
+926b16   # C n=15
+926b21   # C n=14
+926b2c   # C n=13
+926b37   # C n=12
+926b42   # C n=11
+926b4d   # C n=10
+926b58   # C n=9
+926b63   # C n=8
+926b6e   # C n=7
+926b79   # C n=6
+926b84   # C n=5
+926b8f   # C n=4
+926b9a   # C n=3
+926ba5   # C n=2
+926bb0   # C n=1
+926bec   # D n=32
+926bf7   # D n=31
+926c02   # D n=30
+926c0d   # D n=29
+926c18   # D n=28
+926c23   # D n=27
+926c2e   # D n=26
+926c39   # D n=25
+926c44   # D n=24
+926c4f   # D n=23
+926c5a   # D n=22
+926c65   # D n=21
+926c70   # D n=20
+926c7b   # D n=19
+926c86   # D n=18
+926c91   # D n=17
+926c9c   # D n=16
+926ca7   # D n=15
+926cb2   # D n=14
+926cbd   # D n=13
+926cc8   # D n=12
+926cd3   # D n=11
+926cde   # D n=10
+926ce9   # D n=9
+926cf4   # D n=8
+926cff   # D n=7
+926d0a   # D n=6
+926d15   # D n=5
+926d20   # D n=4
+926d2b   # D n=3
+926d36   # D n=2
+926d41   # D n=1
+9270a4   # A n=32
+9270ad   # A n=31
+9270b6   # A n=30
+9270bf   # A n=29
+9270c8   # A n=28
+9270d1   # A n=27
+9270da   # A n=26
+9270e3   # A n=25
+9270ec   # A n=24
+9270f5   # A n=23
+9270fe   # A n=22
+927107   # A n=21
+927110   # A n=20
+927119   # A n=19
+927122   # A n=18
+92712b   # A n=17
+927134   # A n=16
+92713d   # A n=15
+927146   # A n=14
+92714f   # A n=13
+927158   # A n=12
+927161   # A n=11
+92716a   # A n=10
+927173   # A n=9
+92717c   # A n=8
+927185   # A n=7
+92718e   # A n=6
+927197   # A n=5
+9271a0   # A n=4
+9271a9   # A n=3
+9271b2   # A n=2
+9271bb   # A n=1
+927442   # B n=32
+92744b   # B n=31
+927454   # B n=30
+92745d   # B n=29
+927466   # B n=28
+92746f   # B n=27
+927478   # B n=26
+927481   # B n=25
+92748a   # B n=24
+927493   # B n=23
+92749c   # B n=22
+9274a5   # B n=21
+9274ae   # B n=20
+9274b7   # B n=19
+9274c0   # B n=18
+9274c9   # B n=17
+9274d2   # B n=16
+9274db   # B n=15
+9274e4   # B n=14
+9274ed   # B n=13
+9274f6   # B n=12
+9274ff   # B n=11
+927508   # B n=10
+927511   # B n=9
+92751a   # B n=8
+927523   # B n=7
+92752c   # B n=6
+927535   # B n=5
+92753e   # B n=4
+927547   # B n=3
+927550   # B n=2
+927559   # B n=1
+
+# The PC-relative thunks the four setups use to learn their own address
+# (`call $+5; pop reg; add edx,reg`). 0x926a35 is already in lifted.o; this one
+# is not, and every chain-C body that falls through into chain D's setup calls
+# it, so the link fails without it.
+926be4

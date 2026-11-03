@@ -1,0 +1,88 @@
+# Vague 44 — 2026-09-26. Ouverte par runs/p661b_angola_clean_jq-snd-snddec-srv-backend_2_094112
+# (srvbe, bin C15+vague 43 bee88f7e, capot ouvert). Carte jamais chargee : Main prend 11 longjmp
+# « arene pleine » (from=0x004af4c4 -> setjmp par image 0x6404e0), le dernier sur un Com_Frame
+# IMBRIQUE (env=0x0010e6ec au lieu de 0x0010e8d0), et la remontee meurt :
+#
+#   [unwind] tid=0 NO LIFTED BLOCK at 0x004c54d4 (hop 8)
+#   [unwind-cand] tid=0 esp=0x0010e910 ... 006d6259 00632984 005201dc 005201f9 004a0001 00656c62 00631a1c 00900000
+#
+# La vague 43 a fait passer la remontee par 0x42dfce (retour de `call 0x484620`) ; elle meurt au
+# hop suivant. Chaine : 0x5201a0 -> call 0x511ed0 (0x5201dc) -> ... -> 0x6d6240 -> call 0x4c5480
+# (0x6d6259) -> call 0x42dfc0 (0x4c54d4) -> call 0x484620 (0x42dfce, vague 43) -> Com_Error.
+# Le balayage de pile va jusqu'en haut (64 max) : ces 4 retours sont TOUS les trous de Main.
+# Plus deux familles d'un coup : tous les retours de `call 0x511ed0` (49 sites, 48 absents) et de
+# `call 0x4d83f0` (23 sites, 23 absents). 0x511ed0 est aussi sur la chaine de t7 en P660 (0x511ee6).
+# Chaque VA : `call` vers la cible attendue vu par au moins un des trois decodages (retcall.py).
+0x44786a
+0x48f668
+0x4b48c9
+0x4c54d4
+0x4c83a3
+0x4d6655
+0x4de709
+0x4df62b
+0x4ec28f
+0x4f02ea
+0x4fe68d
+0x5031b0
+0x512a71
+0x520175
+0x5201dc
+0x5201f9
+0x521015
+0x563031
+0x567cdb
+0x568af1
+0x57353b
+0x57cf34
+0x5a6de3
+0x5a6f11
+0x5a7994
+0x5b4c59
+0x5ee52e
+0x6207fc
+0x62618a
+0x629096
+0x62f619
+0x63a824
+0x65baba
+0x6ab26c
+0x6ac0ac
+0x6ac0c9
+0x6ac0e5
+0x6ac101
+0x6ac13b
+0x6ac23a
+0x6ac24e
+0x6ac2ce
+0x6ac2e2
+0x6b44ea
+0x6b44ff
+0x6b450c
+0x6b4569
+0x6b7467
+0x6b7478
+0x6b7489
+0x6bf1ac
+0x6bf1d1
+0x6bf22e
+0x6bf28e
+0x6bf2ee
+0x6bf34e
+0x6bf362
+0x6bf36f
+0x6bf391
+0x6bf3b1
+0x6bf3f1
+0x6d6259
+0x6e10c1
+0x6eaf27
+0x702e96
+0x776004
+0x7834e8
+0x78353b
+0x7835e5
+0x783659
+0x7837c5
+0x7855f2
+0x78fe29

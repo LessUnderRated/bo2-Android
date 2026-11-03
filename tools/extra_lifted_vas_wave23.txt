@@ -1,0 +1,20 @@
+# Wave 23 — unwind holes: [unwind] tid=12 NO LIFTED BLOCK at 0x0040ce15 (hop 3) kills the Server
+# thread in EVERY run of 2026-09-11 (rw_*, cw_*); Main then waits on its orphan event
+# 0x1003a forever (runs/cw_2 froze +361 s after spawn). Plus the [unwind-cand] return sites.
+40ce15
+522167
+497114
+797a99
+6295cc
+79159c
+647fab
+5ddf9e
+5d3a4b
+7c1cd2
+7c1da7
+40ce36
+670aaf
+# fixpoint of the census over the entries above
+647f77
+647fa6
+670aa0

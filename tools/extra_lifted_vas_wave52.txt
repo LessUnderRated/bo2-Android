@@ -1,0 +1,5 @@
+# Vague 52 — 2026-10-04. Ouverte par P783 (so_rts_afghanistan, débloqué par un clic) : après 92 s de monde,
+# `[shim] function_call: unknown target 0x8a48b0` ×5000 puis [RUNAWAY]. Rappel d'entité appelé par `call eax` en
+# 0x5826fc (eax = [esi+0xdc]), posé en 0x56c14a avec son frère [esi+0xe0] = 0x8a1bd0 (déjà lifté).
+# Appelés directs déjà liftés : 0x48f740, 0x4720a0, 0x60ebd0.
+0x8a48b0:1a5  # ret 0x8a4a54

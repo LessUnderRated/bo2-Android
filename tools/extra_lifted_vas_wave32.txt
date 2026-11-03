@@ -1,0 +1,23 @@
+# Wave 32 — la mort de runs/w31_long3 a 1056 s, et ce n'est PAS un gel.
+#
+# Ce que le journal dit, dans l'ordre (runs/w31_long3/run.log:121318-121323) :
+#   [LONGJMP-ALL] tid=0 env=0x0010faa8 from=0x004af4c4 val=1
+#   [longjmp]     tid=0 (main) #1 resume pc=0x006404e0
+#   [unwind]      tid=0 NO LIFTED BLOCK at 0x005090e5 (hop 8)
+#   [unwind-cand] tid=0 ... 005313b1 005536e1 0058289e 007768e9 00900000
+#   [gfx] guest finished — window held open, close it to exit
+#
+# Autrement dit : win32_run_main_thread_impl a RENDU LA MAIN. L'invite n'etait
+# pas fige, il etait FINI — le thread invite avait quitte le processus, et les
+# 54 fps de la fenetre etaient la boucle de maintien (BO2_WINDOW_HOLD), pas le
+# jeu. C'est pour ca que toutes les [CADENCE] etaient a (+0) en meme temps et
+# que `sample` ne montrait AUCUN thread invite : il n'y en avait plus.
+#
+# La cause est une remontee de pile apres longjmp qui bute au hop 8 sur un bloc
+# non lifte. tools/unwind_candidates.py valide 4 des 5 candidats par decodage
+# (« precede par un call ») et jette 00900000 comme residu.
+0x5090e5
+0x5313b1
+0x5536e1
+0x58289e
+0x7768e9

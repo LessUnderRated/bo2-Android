@@ -1,0 +1,47 @@
+# C17 — 2026-09-26. Les 37 entrees « simples » de boot_cache/extra_lifted2.o (liftees le 25 juillet, AVANT
+# le repliage de la barriere), reliftees avec les MEMES drapeaux que lifted.o :
+#   BO2_INLINE_READS=1 BO2_INLINE_WRITES=1 BO2_INLINE_FLAGS=1 tools/lift_extra.py
+# Pourquoi : profil p662 101734 (srvbe) — les 4 fils jq sont occupes a 70 %, dont 18 % dans ces fonctions
+# (0x707860, 0x707e50, 0x708559, 0x707deb : les boucles de skinning, blocs que Ghidra avait coupes de
+# 0x7077d0/0x707d50/0x708400) plus leurs appels non replies (__remill_write_memory_f32 4,7 %,
+# __remill_read_memory_f32 2,7 %, drapeaux) ; et Main passe 38 % dans l'attente de groupe de taches
+# (0x5cb6c0 -> 0x8fbae0 -> 0x8fb5d0) qui attend ces fils. Les 2 symboles _impl de l'objet
+# (sub_4c5480_impl, sub_63a7b0_impl) restent dans l'ancien objet ; les 37 y sont rendus LOCAUX
+# (extra_lifted2_reste.o), les nouveaux (extra_lifted2_folded.o) prennent les noms globaux.
+0x4218f0
+0x4349c0
+0x4f5520
+0x592840
+0x70758c
+0x7075b9
+0x7075d9
+0x7077c2
+0x707840
+0x707860
+0x707ad3
+0x707adc
+0x707b38
+0x707b44
+0x707de2
+0x707deb
+0x707e44
+0x707e50
+0x7080de
+0x7080ec
+0x708143
+0x70814c
+0x708189
+0x7081ac
+0x708450
+0x70848a
+0x70849b
+0x7084f0
+0x7084f9
+0x708536
+0x708559
+0x708784
+0x7500c0
+0x7b1b63
+0x7b2f38
+0x7b4883
+0x8a27e0

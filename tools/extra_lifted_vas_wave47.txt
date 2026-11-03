@@ -1,0 +1,6 @@
+# Vague 47 — 2026-09-30. Ouverte par P725 : le corps cache de `updategamerprofile` (bloc .conceal 0xa329c0,
+# dechiffre dans le tas par sub_5ec7b0 -> 0x67f930, entre en bloc+0x40 par le `ret` de sub_5090f0) fait
+# `call 0x7e6f50` puis `jmp 0x7e6fc0`. Aucune reference dans .text : seul ce code du tas les atteint, donc le
+# lift (catalogue Ghidra + fermeture des appels directs) ne les a jamais vues (fragments desalignes seulement).
+0x7e6f50  # appelee par le corps cache de updategamerprofile
+0x7e6fc0  # rejointe par `jmp` depuis le meme corps

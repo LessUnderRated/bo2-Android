@@ -1,0 +1,21 @@
+diff --git a/lib/Arch/X86/Semantics/POP.cpp b/lib/Arch/X86/Semantics/POP.cpp
+index 1efd244..f45137f 100644
+--- a/lib/Arch/X86/Semantics/POP.cpp
++++ b/lib/Arch/X86/Semantics/POP.cpp
+@@ -146,6 +146,16 @@ DEF_ISEL(POP_MEMv_16) = POP<M16W>;
+ DEF_ISEL_M32or64W(POP_MEMv, POP);
+ 
+ #if 32 == ADDRESS_SIZE_BITS
++// 🎯 POPA_16 — l'iform que XED produit REELLEMENT pour `66 61` (popaw).
++// `InstructionFunctionName` (lib/Arch/X86/Arch.cpp:338) suffixe un iform
++// SCALABLE par sa largeur d'operande effective : `66 61` donne POPA_16 et
++// `61` donne POPAD_32. Le POPA_32 d'origine ne correspond donc a AUCUNE
++// instruction decodable, pendant que POPA_16 n'a pas de semantique — et
++// remill abaisse alors l'instruction en
++// `__remill_sync_hyper_call(..., kX86EmulateInstruction)` suivi de
++// `__remill_error`, ce qui tue la fonction. Le cote PUSH, lui, est correct
++// (PUSHA_16 / PUSHAD_32), et DoPOPA depile bien des registres 16 bits.
++DEF_ISEL(POPA_16) = DoPOPA;
+ DEF_ISEL(POPA_32) = DoPOPA;
+ DEF_ISEL(POPAD_32) = DoPOPAD;
+ #endif

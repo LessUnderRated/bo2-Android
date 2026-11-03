@@ -1,0 +1,43 @@
+# Vague 40 — 2026-09-18. Ouverte par runs/mc1, qui a ATTEINT LE NIVEAU
+# (3298-3333 dessins par image, 1802 a l'ecran, 20 passes, 911 images) et qui
+# n'a PAS gele : il est MORT, et d'une mort deja cataloguee par la vague 32.
+#
+#   [gfx] real draws: ... this frame 3329 records, 1802 of them to the SCREEN
+#   [LONGJMP-ALL] tid=0 env=0x0010e8d0 from=0x004af4c4 val=1
+#   [longjmp]     tid=0 (main) #1 resume pc=0x006404e0
+#   [unwind]      tid=0 NO LIFTED BLOCK at 0x006ac155 (hop 7)
+#   [gfx] guest finished
+#
+# C'est bien une ADRESSE DE RETOUR, pas un residu de pile : desassemblage de
+# ce qui precede, `0x006ac150: e8cb84ddff  call 0x484620` fait 5 octets et rend
+# donc la main en 0x006ac155. Les deux autres candidats de la ligne
+# [unwind-cand] (004a0001, 00656c62) sont des residus, et 00900000 avait deja
+# ete jete comme tel par la vague 32.
+#
+# Classe : extent TRONQUE. Le dernier debut catalogue par Ghidra avant ce bloc
+# est 0x6abcc7 (lifted.o) ; aucun symbole _sub_6ac1xx n'existe dans AUCUN objet.
+#
+# ── LES ONZE D'UN COUP, ET POURQUOI ────────────────────────────────────────
+# La vague 38 avait bouche le hop 8 (0x006ae6b0) ; mc1 est mort au hop 7. Le
+# derouleur descend d'un cran par vague, ce que la vague 28 avait deja mesure
+# (« chaque hop coute une vague quand on les fait un par un »). Le journal de
+# mc1 porte la pile invitee de tid 0 FIGEE A L'ESP MORT (0x0010eadc) :
+#   [GSTACK] (tid fige dans du code leve) tid=0 RUNNING ... esp=0x0010eadc
+# 12 trames distinctes, dont 10 sans aucune entree liftee dans AUCUN objet.
+# Les 11 VA ci-dessous (ces 10 + celle nommee par le message) passent toutes le
+# controle par DECODAGE « precedee d'un call se terminant exactement ici » :
+# 11 validees, 0 jetee. La chaine se recoupe d'elle-meme — 0x624aa8 revient de
+# `call 0x80df30`, et 0x8094dd revient de `call 0x624aa0`, la fonction qui
+# contient la precedente.
+# (tools/unwind_candidates.py sur le seul [unwind-cand] n'en donnait qu'UNE :
+#  ses 3 dwords de pile sont tous des residus. C'est le dump GSTACK qui porte
+#  la chaine, pas le balayage de pile.)
+#
+# ⚠️ CORRECTION 2026-09-18 16:30 — RAMENEE DE 11 VA A UNE SEULE.
+# Les 10 autres trames de la pile GSTACK sont DEJA liftees, dans
+# boot_cache/unwind_extra.o (864 symboles _sub_*). Mon controle « absente
+# de tous les objets » n'enumerait que lifted.o et extra_lifted*.o : le
+# lien a donc rendu « ld: 10 duplicate symbols », le binaire n'a pas ete
+# produit, et scripts/build_only.sh a quand meme rendu 0.
+# => Le seul vrai trou est celui que le message de mort nommait.
+0x6ac155

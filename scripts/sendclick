@@ -1,0 +1,59 @@
+#!/bin/bash
+# Send a mouse event to a running boot via its BO2_CLICKPIPE FIFO.
+#
+# WHY THIS AND NOT CGEventPostToPid. `scripts/sendkey` posts a real system event
+# and it works only when the game is the frontmost application — which, on
+# macOS 14+, nothing outside the process can arrange (measured 2026-08-02; both
+# NSRunningApplication activateWithOptions: and System Events report success and
+# change nothing). Four runs died at Press Start that way. The clickpipe injects
+# into the same queue [NSApp nextEventMatchingMask:] feeds, so it does not care
+# about focus at all, and the guest cannot tell the difference.
+#
+#   scripts/sendclick <fifo> click  <x> <y> [hold_ms]
+#   scripts/sendclick <fifo> rclick <x> <y> [hold_ms]
+#   scripts/sendclick <fifo> move   <x> <y>
+#
+# x and y are CLIENT pixels, top-left origin. Write them with a decimal point to
+# mean FRACTIONS of the client area instead — `click 0.5 0.5` is dead centre,
+# which is what you actually have when working from a screenshot of a window
+# whose pixel size you do not know.
+#
+# The run must have been started with BO2_CLICKPIPE=<fifo>. Look for
+# "[CLICKPIPE] listening on <fifo>" in its log; every injected event prints a
+# "[CLICKPIPE] ..." line, so a click that produced nothing downstream is
+# distinguishable from one that was never delivered.
+set -u
+
+FIFO="${1:?usage: sendclick <fifo> click|rclick|move <x> <y> [hold_ms]}"; shift
+VERB="${1:?missing verb (click|rclick|move)}"; shift
+X="${1:?missing x}"; shift
+Y="${1:?missing y}"; shift
+HOLD="${1:-60}"
+
+case "$VERB" in
+    click|rclick|move) ;;
+    *) echo "sendclick: unknown verb '$VERB' (want click|rclick|move)" >&2; exit 2 ;;
+esac
+
+if [ ! -p "$FIFO" ]; then
+    echo "sendclick: $FIFO is not a FIFO — is the run up, and was it started" >&2
+    echo "           with BO2_CLICKPIPE=$FIFO ?" >&2
+    exit 1
+fi
+
+# A FIFO with no reader blocks forever on open. The runtime holds its own writer
+# end open, so a live run never blocks here; a DEAD run would hang this script
+# indefinitely and look like the click was accepted. Time it out and say so.
+( printf '%s %s %s %s\n' "$VERB" "$X" "$Y" "$HOLD" > "$FIFO" ) &
+w=$!
+for _ in $(seq 1 20); do
+    kill -0 "$w" 2>/dev/null || break
+    sleep 0.1
+done
+if kill -0 "$w" 2>/dev/null; then
+    kill "$w" 2>/dev/null
+    echo "sendclick: TIMED OUT writing to $FIFO — nothing is reading it." >&2
+    echo "           The event was NOT delivered." >&2
+    exit 1
+fi
+echo "sent: $VERB $X $Y $HOLD -> $FIFO"

@@ -1,0 +1,4 @@
+# Vague 49 — 2026-10-03. Ouverte par P747 : `[shim] function_call: unknown target` dans des cartes VIVANTES (le shim
+# saute l'appel, Windows l'execute). Meme forme que la vague 48 : relais d'edition incrementale (`jmp <corps lifte>`)
+# range comme rappel, atteint seulement par `call reg`.
+0x85caf0  # jmp 0x526d90 ; range en 0x630700 (`mov [edi+0xcd158], 0x85caf0`), appele en 0x71b66c (`call eax`) ; pakistan 233x, panama 374x, blackout 5000x puis [RUNAWAY] (mort a 185 s)

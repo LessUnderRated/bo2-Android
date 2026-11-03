@@ -1,0 +1,43 @@
+# Vague 42 — 2026-09-24. Ouverte par runs/p645_angola_clean_jq-snd-snddec_2_1_230448
+# (bras temoin de P645 : jq, snd, snddec heberges, HW_ATOMICS=2, BO2_HWA_CEDE_SEQ=1,
+# bin ced6b9d2). Carte jamais chargee : Main (tid 0) meurt d'un trou de derouleur
+# apres le MEME longjmp « arene pleine » que les vagues 32, 38, 40 et 41 :
+#
+#   [LONGJMP-ALL] tid=0 env=0x0010e8d0 from=0x004af4c4 val=1 | jb eip=0x006404e0
+#   [unwind] tid=0 NO LIFTED BLOCK at 0x006ac33b (hop 7)
+#   [unwind-cand] tid=0 esp=0x0010eadc unlifted .text dwords above it: 004a0001 00656c62 00900000
+#
+# Controle par DECODAGE, depuis deux points de depart :
+#   0x6ac33b <- 0x6ac336 call 0x484620   (aligne depuis 0x6ac32e et 0x6ac320)
+# Les trois [unwind-cand] ne sont PAS des adresses de retour (milieu d'instruction) :
+#   0x656c62 dans `push 0xa8f79a` (0x656c60), aligne depuis 0x656c50
+#   0x4a0001 dans `mov edx, [0x2a3cb04]` (0x49fffe)
+#   0x900000 dans `fstp dword ptr [esp+0x20]` (0x8ffffd)
+# Absente de tous les objets (`nm boot_cache/*.o | grep " T _sub_6ac33b$"` vide).
+#
+# C'est le DEUXIEME saut dans la meme fonction (0x6abcc7, liftee, 0x6abcc7..0x6acdcd) :
+# la vague 40 avait pris 0x6ac155 (<- 0x6ac150 call 0x484620). Le setjmp 0x6404e0
+# est atteint SOUS 0x484620 ; l'arene se remplit a un appel different selon le
+# moment. Sur 115 appels de la fonction, 112 retours n'ont pas de point d'entree ;
+# on prend d'un coup les 18 retours de `call 0x484620` qui manquent (le 21e,
+# 0x6ac155, est la vague 40 ; 2 autres existaient), pour ne pas payer un run mort
+# par saut. Decodage lineaire depuis le debut catalogue 0x6abcc7 : chaque retour
+# suit un `e8 rel32` visant exactement 0x484620.
+0x6abdc6
+0x6ac148
+0x6ac2fe
+0x6ac30b
+0x6ac321
+0x6ac33b
+0x6ac3a6
+0x6ac3b3
+0x6ac3c0
+0x6ac3cd
+0x6ac3ef
+0x6ac3fc
+0x6ac409
+0x6ac416
+0x6ac508
+0x6ac515
+0x6ac595
+0x6ac5a2

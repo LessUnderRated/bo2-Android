@@ -1,0 +1,3 @@
+# Vague 50 — 2026-10-04. Ouverte par P779 : les 3 premières cartes Strike Force (so_rts_mp_dockside, so_rts_afghanistan,
+# so_rts_mp_drone) meurent toutes par [RUNAWAY] sur `[shim] function_call: unknown target 0x8a1b60` ×5000 (~125 s).
+0x8a1b60:61  # rappel d entite range en 0x5f2fb8 (`mov [edi+0xdc], 0x8a1b60`), appele par pointeur ; corps 0x8a1b60-0x8a1bc0 (ret), appelle 0x60ebd0, 0x48de70, 0x5fe8b0

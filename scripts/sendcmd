@@ -1,0 +1,45 @@
+#!/bin/bash
+# Send a console command to a RUNNING game via its BO2_CMDPIPE FIFO.
+#
+#   scripts/sendcmd <fifo> <command...>
+#   scripts/sendcmd /tmp/bo2.cmd give all      (needs BO2_CHEATS=1)
+#   scripts/sendcmd /tmp/bo2.cmd god           (caught by the runtime, P723; noclip/ufo are stripped)
+#   scripts/sendcmd /tmp/bo2.cmd spmap angola
+#
+# The run must have been started with BO2_CMDPIPE=<fifo> (scripts/play.sh does
+# this by default). Look for "[CMDPIPE] listening on <fifo>" in its log.
+#
+# ⚠️ AN UNREGISTERED COMMAND DIES IN SILENCE. The engine's per-command executor
+# walks one list and falls out a gated unknown-command path that prints nothing —
+# that is why `spmap` looked ignored for several sessions. Every command sent
+# here prints "[CMDPIPE] queued" then "[CMDPIPE] injecting", so:
+#   both lines, no effect   -> the command is not registered / needs cheats
+#   no lines at all         -> it never reached the game; check the FIFO
+set -u
+
+FIFO="${1:?usage: sendcmd <fifo> <command...>}"; shift
+[ $# -gt 0 ] || { echo "sendcmd: no command given" >&2; exit 2; }
+CMD="$*"
+
+if [ ! -p "$FIFO" ]; then
+    echo "sendcmd: $FIFO is not a FIFO — is the game running, and was it" >&2
+    echo "         started with BO2_CMDPIPE=$FIFO ?" >&2
+    exit 1
+fi
+
+# A FIFO with no reader blocks forever on open; the runtime holds its own writer
+# end open, so a live run never blocks. A DEAD run would hang here and look like
+# the command was accepted. Bound it and say which happened.
+( printf '%s\n' "$CMD" > "$FIFO" ) &
+w=$!
+for _ in $(seq 1 20); do
+    kill -0 "$w" 2>/dev/null || break
+    sleep 0.1
+done
+if kill -0 "$w" 2>/dev/null; then
+    kill "$w" 2>/dev/null
+    echo "sendcmd: TIMED OUT writing to $FIFO — nothing is reading it." >&2
+    echo "         The command was NOT delivered." >&2
+    exit 1
+fi
+echo "sent: $CMD"

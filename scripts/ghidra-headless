@@ -1,0 +1,12 @@
+#!/bin/zsh
+# Wrapper for Ghidra headless analyzer (brew doesn't put it on PATH).
+# Sets JAVA_HOME to brew's openjdk@21, which Ghidra requires.
+export JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
+# ⚠️ HEAP. t6sp.exe analysed on the stock heap; t6mp.exe (22% more .text) died with
+#     ERROR caught exception (X86Analyzer) java.lang.OutOfMemoryError: Java heap space
+# partway through, leaving a half-analysed project. support/launch.sh turns MAXMEM
+# into -Xmx, so set it here once rather than remembering it per invocation.
+# 8G on a 16 GB machine: enough for the bigger binaries, and it still leaves room
+# for the OS and a game run alongside.
+export MAXMEM="${MAXMEM:-8G}"
+exec /opt/homebrew/Cellar/ghidra/12.1.2/libexec/support/analyzeHeadless "$@"

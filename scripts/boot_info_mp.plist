@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Call of Duty: Black Ops II - Multiplayer</string>
+  <key>CFBundleDisplayName</key><string>Call of Duty: Black Ops II - Multiplayer</string>
+  <key>CFBundleIdentifier</key><string>local.bo2-native.boot-mp</string>
+</dict></plist>

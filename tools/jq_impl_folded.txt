@@ -1,0 +1,26 @@
+# C23 — 2026-09-26. Les six fonctions des objets _impl de la file de taches (liftes du 7 au 10 aout, AVANT le
+# repliage de la barriere : ils importent __remill_write_memory_32 nu), reliftees une par une avec les MEMES
+# drapeaux que lifted.o, puis renommees sub_X -> sub_X_impl (l'interposeur du runtime garde le nom sub_X) :
+#   BO2_INLINE_READS=1 BO2_INLINE_WRITES=1 BO2_INLINE_FLAGS=1 python3 tools/lift_extra.py <va> --obj raw_<va>.o
+#   llvm-objcopy --redefine-sym _sub_<va>=_sub_<va>_impl raw_<va>.o boot_cache/c23_<va>_impl.o
+# Controle : `llvm-dis <.fixed> | grep -c 'ptrtoint ptr .* to i32\|inttoptr i32'` = 0 pour les six ; chaque
+# objet importe *_slow et bo2_w32_cold. Ils remplacent jobrun_impl.o, enq_impl.o, queue_impl.o, jq_impl.o et
+# grp_impl.o dans LINK_OBJS.
+# Pourquoi : sample p668 144956 (srvbe), sur le fil ordonnanceur (occupe a 99 %), en propre, harnais compris :
+# sub_8fc240_impl 9,3 %, sub_8fc330_impl 7,1 %, sub_8fb010_impl 3,0 %, dont 6,2 points d'ecriture 32 bits lente.
+0x8fb010   # jobrun_impl.o
+0x8fc240   # enq_impl.o
+0x8fc330   # queue_impl.o
+0x5c6340   # jq_impl.o
+0x8facb0   # jq_impl.o
+0x453a80   # grp_impl.o
+# C34 — 2026-09-26. Les quatre objets chauds (8fb010, 8fc240, 8fc330, 5c6340) repassent par la passe C33
+# (outil hors depot) : P674 montrait qu'ils tenaient encore le verrou global et renvoyaient les natifs
+# en vol au verrou. La passe veut l'ecriture en APPEL : relift SANS BO2_INLINE_WRITES, puis la chaine de lifted.o.
+#   (sauver puis retirer boot_cache/lift_wip/func_<va>.bc.fixed, lift_extra le reutilise ; le remettre apres)
+#   BO2_INLINE_READS=1 BO2_INLINE_FLAGS=1 python3 tools/lift_extra.py 0x<va> --obj /dev/null-ish ; cp le .fixed
+#   opt -load-pass-plugin=bo2natomic.dylib -passes=bo2-natomic | llvm-dis | stream_inline_triv | stream_c27
+#     | stream_inline_writes | dedup_ll_globals | widen_guest_gep | llvm-as | clang -O2
+#   llvm-objcopy --redefine-sym _sub_<va>=_sub_<va>_impl -> boot_cache/c34_<va>_impl.o
+# Resultat : 17 sequences natives, 0 laissee ; 0 ptrtoint i32, 0 SXTW ; imports identiques a c23 (+ c33).
+# 8facb0 et 453a80 n'ont aucune sequence lock : leurs objets c23 restent.

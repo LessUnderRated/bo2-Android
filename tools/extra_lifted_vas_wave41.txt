@@ -1,0 +1,78 @@
+# Vague 41 — 2026-09-24. Ouverte par runs/p642_angola_clean_snddec_2_165409
+# (bras S de P642 : snddec heberge, HW_ATOMICS=2, bin 81036b79). Carte chargee,
+# puis monde FIGE a svsTime=163100 pendant 366 s. Ce n'est pas un gel : le fil
+# Database (tid 3, proc 0x80dee0 param 0xb) est MORT d'un trou de derouleur,
+# depuis le MEME longjmp que les vagues 32, 38 et 40 :
+#
+#   [LONGJMP-ALL] tid=3 env=0x41c1a15c from=0x004af4c4 val=1 | jb eip=0x006404e0
+#   [unwind] tid=3 NO LIFTED BLOCK at 0x00779478 (hop 11) — thread ends
+#   [unwind-cand] tid=3 esp=0x41c1a520 unlifted .text dwords above it: 004e0254 005d2a22
+#   [thread] DONE proc=0x0080dee0 (tid 3)
+#
+# Le lanceur du throw est 0x52b1b1 (adresse de retour 0x52b1b6 trouvee a
+# esp+0xc) : 0x52b160 marque un objet (bit 0) et l'alloue au sommet d'une arene
+# ([esi+4] - [esi+0x20] < [esi] -> 0x4af470 -> longjmp([ecx+0x40], 1)). C'est un
+# « arene pleine » du jeu, legitime ; sous Windows le longjmp aboutit.
+# Consequence en aval : 0x10013 (fin de chargement, signale par tid 3 seul) ne
+# l'est plus jamais ; Main le sonde en 0x6518bf (WFSO 1000 ms) pour toujours, le
+# zone weapon_attach_shared ne finit pas, et « unknown weapon '%s' » suit.
+# Temoin T du meme tour (meme binaire, non heberge) : tid 3 vivant (BLK@WFSO-event).
+#
+# Controle par DECODAGE, depuis deux points de depart : chacune est precedee
+# d'un call de 5 octets se terminant exactement ici.
+#   0x779478 <- 0x779473 call 0x7790e0   (nommee par le message de mort)
+#   0x4e0254 <- 0x4e024f call 0x67f930   ([unwind-cand], aligne depuis 0x4e024a)
+#   0x5d2a22 <- 0x5d2a1d call 0x439b60   ([unwind-cand], aligne depuis 0x5d2a10)
+# Absentes de TOUS les objets : `nm boot_cache/*.o | grep " T _sub_<va>$"` vide
+# pour les trois (lecon de la vague 40 : unwind_extra.o compte aussi).
+# Les deux [unwind-cand] sont pris d'avance pour ne pas payer un run par hop.
+0x779478
+0x4e0254
+0x5d2a22
+#
+# + runs/p642_angola_clean_snd-snddec_2_170434 (bras SS du meme tour : snd ET snddec
+# heberges). Carte chargee, jeu a 0,57x pendant 27 s, puis monde fige 366 s : cette
+# fois c'est le SERVEUR (tid 11, proc 0x80dee0 param 0xa) qui meurt, apres un longjmp
+# d'erreur GSC ordinaire (from=0x0087e128 val=-1, le 11e de ce fil ; les 10 premiers
+# ont abouti) :
+#   [unwind] tid=11 NO LIFTED BLOCK at 0x00885b0f (hop 5) — thread ends
+#   [unwind-cand] tid=11 esp=0x49394e90 unlifted .text dwords above it:   (aucun)
+#   [ORPHAN-EVENT] h=0x10039 unsignalled and tid=11 was its ONLY signaller
+#   0x885b0f <- 0x885b0a call 0x5f7b80   (aligne depuis 0x885af4, 0x885afc, 0x885b00)
+# Absente de tous les objets.
+0x885b0f
+#
+# + runs/p642_angola_clean_jq-snd-snddec_2_171500 (bras JSS, essai 1 : jq, snd,
+# snddec heberges). Carte jamais chargee (run mort). L'ouvrier jq tid 7 (proc
+# 0x8fb8e0, HEBERGE) prend 24 fois le meme longjmp « arene pleine »
+# from=0x004af4c4 -> 0x6404e0 et s'en remet, puis meurt au 25e :
+#   [unwind] tid=7 NO LIFTED BLOCK at 0x00576580 (hop 3) — thread ends
+#   [unwind-cand] tid=7 esp=0x4354b268 unlifted .text dwords above it: 006157e9 00615824
+#   0x576580 <- 0x57657b call 0x65ff70   (aligne depuis 0x576560 et 0x576568)
+#   0x6157e9 <- 0x6157e4 call 0x46be50   (aligne depuis 0x6157d0)
+#   0x615824 <- 0x61581f call 0x5ebb20
+# Absentes de tous les objets. (Le « === CRASH (signal 6) » de ce run tombe a
+# l'import #400000004 : notre plafond d'imports, bien apres la mort de tid 7.)
+0x576580
+0x6157e9
+0x615824
+#
+# + runs/p642_angola_clean_jq-snd-snddec_2_172124 (bras JSS, essai 2, mort aussi) :
+# l'ouvrier jq tid 5 (heberge) meurt du meme longjmp, un cran plus bas :
+#   [unwind] tid=5 NO LIFTED BLOCK at 0x0043d26b (hop 2) — thread ends
+#   [unwind-cand] tid=5 esp=0x41d26d60 unlifted .text dwords above it: 006157e9 00615824
+# (les deux candidats sont ceux de tid 7 : meme chaine d'appel, deja ci-dessus)
+#   0x43d26b <- 0x43d266 call 0x962966   (aligne depuis 0x43d250 et 0x43d258)
+0x43d26b
+#
+# ── FERMETURE (a la main, restreinte a cette vague par --newer) ─────────────
+# harvest_missing_blocks.py --newer rend 40 cibles, 33 non enregistrees, TOUTES
+# autour de 0x885b0f -- et 32 d'entre elles tombent AU MILIEU d'instructions
+# (0x885aad est dans `mov esi,0xc664cc` en 0x885aaa, 0x885ab9 dans `mov ebp,1`
+# en 0x885ab7...) : l'heuristique `add %program_counter, K` lit ici les PC de
+# chaque instruction, pas des cibles. Decodage de l'etendue [0x885b0f, 0x885b4c] :
+# une seule sortie hors etendue, l'arete de boucle `jne 0x885ac0` en 0x885b41
+# (boucle de 100 entrees de 0x180 octets depuis 0xc664cc) ; 0x885b29/2e/34/37/47
+# sont DANS l'etendue. Les 7 autres (0x5764da, 0x5765a2, 0x779450/65/84/99)
+# sont deja des points d'entree.
+0x885ac0

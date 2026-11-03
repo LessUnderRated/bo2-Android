@@ -1,0 +1,47 @@
+--- a/lib/Arch/X86/Semantics/X87.cpp
++++ b/lib/Arch/X86/Semantics/X87.cpp
+@@ -725,12 +725,25 @@
+ 
+ namespace {
+ 
++// x87 integer rounding (FIST*, FRNDINT, FBSTP) follows the RC field of the
++// control word, not the host rounding mode. MSVC's truncating cast is
++// `fnstcw ; or eax, 0xc00 ; fldcw ; fistp ; fldcw` and relies on it.
++ALWAYS_INLINE static float80_t RoundUsingX87Control(const State &state,
++                                                    float80_t val) {
++  switch (state.x87.fxsave.cwd.rc) {
++    case kFPURoundDownNegInf: return FRoundToNegativeInfinity80(val);
++    case kFPURoundUpInf: return FRoundToPositiveInfinity80(val);
++    case kFPURoundToZero: return FTruncTowardZero80(val);
++    default: return FRoundUsingMode80(val);
++  }
++}
++
+ DEF_FPU_SEM(FBSTP, MBCD80W dst, RF80W src) {
+   SetFPUIpOp();
+   bcd80_t out_bcd = {};
+ 
+   auto read = Read(src);
+-  auto rounded = FRoundUsingMode(read);
++  auto rounded = RoundUsingX87Control(state, read);
+   auto rounded_abs = FAbs(rounded);
+ 
+   // Any larger double aliases an integer out of 80-bit packed BCD range.
+@@ -807,7 +820,7 @@
+ template <typename C1, typename C2>
+ DEF_HELPER(ConvertToInt, C1 cast, C2 convert, native_float80_t input)
+     ->decltype(cast(input)) {
+-  auto rounded = FRoundUsingMode80(input);
++  auto rounded = RoundUsingX87Control(state, input);
+   auto casted = CheckedFloatUnaryOp(state, cast, rounded);
+   auto converted = convert(rounded);
+   auto back = static_cast<native_float80_t>(converted);
+@@ -1358,7 +1371,7 @@
+ DEF_FPU_SEM(DoFRNDINT) {
+   SetFPUIpOp();
+   auto st0 = Read(X87_ST0);
+-  auto rounded = FRoundUsingMode(st0);
++  auto rounded = RoundUsingX87Control(state, st0);
+   state.sw.ie |= IsSignalingNaN(st0);
+   state.sw.de |= IsDenormal(st0);
+   if (!IsNaN(rounded)) {

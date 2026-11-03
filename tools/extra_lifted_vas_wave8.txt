@@ -1,0 +1,17 @@
+# wave8: EVERY setjmp resume point in the image — the address right after
+# each `call 0x964060`, found by exact byte match on the call encoding.
+# A guest longjmp resumes at exactly one of these, and the unwinder needs a
+# registered block there or the thread simply ends. 0x4af410 (Com_Error) and
+# 0x4715b1 (lua_pcall) were each found the expensive way, one crash at a
+# time; this is the whole set, derived instead of sampled.
+4715b1
+63fe55
+63fe8a
+6cac59
+6cac9d
+7794e4
+80b42d
+80d77e
+852aef
+8d284e
+8d2aca

@@ -1,0 +1,6 @@
+# Vague 46 — 2026-09-27. Ouverte par P685 : `[shim] function_call: unknown target 0x6db8c0` dans TOUS les
+# runs srvbe relus (P680-P685, 5 a 146 fois par run de 600 s). 0x6db8c0 n'est appelee que par pointeur :
+# `push 0x6db8c0` en 0x6dacda (seule reference du .text) la passe comme rappel a un parcours. Corps :
+# copie 3 sommets (xyz + 3 zeros + [0xbb2bf8]) sur 0x2a0 octets de pile, puis produits vectoriels
+# (geometrie de triangle). Le shim revenait sans l'executer : le rappel ne faisait rien, sous Windows il calcule.
+0x6db8c0  # rappel passe par push en 0x6dacda

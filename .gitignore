@@ -1,0 +1,12 @@
+*.o
+*.dylib
+*.pyc
+__pycache__/
+.DS_Store
+bin/
+boot_cache/
+runs/
+pe_sections.bin
+tools/remill-src/
+tools/oat-src/
+runtime/win32/snd_reverb_gen.inc

@@ -1,0 +1,5 @@
+# wave 31 — le bloc qui a tue runs/long1 a 1005 s :
+# "[MISSING] block at 0x007a65ea not lifted" -> CRASH signal 6.
+# Bloc interne a sub_7a6530, cible du `je 0x7a65ea` de 0x7a6580 que remill
+# n a pas suivi. Classe fermee en enregistrant le bloc comme entree a lui seul.
+0x7a65ea

@@ -1,0 +1,55 @@
+# Vague 43 — 2026-09-26. Ouverte par runs/p660_angola_clean_jq-snd-snddec-srv-backend_2_224527
+# (srvbe : jq, snd, snddec, srv, backend heberges, HW_ATOMICS=2, bin C14 2e7ee052). Carte jamais
+# chargee : l'ouvrier jq t7 fait un longjmp, la remontee meurt, Main attend sa tache (0x8fb674) :
+#
+#   [unwind] tid=7 NO LIFTED BLOCK at 0x006bf159 (hop 7) — thread ends
+#   [unwind-cand] tid=7 esp=0x4364ce3c unlifted .text dwords above it:
+#       005cb6cc 00539842 006d6232 006d6189 00511ee6 006b744f 006eb1f1
+#
+# Au lieu d'un saut par run mort, trois familles d'un coup. Chaque VA est un retour de `call`
+# valide par decodage lineaire depuis trois departs (va-0x40, va-0x31, va-0x23) ; absente de
+# tous les objets (`nm boot_cache/*.o`, symbole _sub_<va>).
+#
+# 1. LES 16 RETOURS DE `call 0x484620` QUI MANQUAIENT DANS TOUT .text (38 sites d'appel,
+#    22 deja lifes par les vagues 32/38/40/41/42). Le longjmp « arene pleine » est atteint SOUS
+#    0x484620 ; 0x6bf159 (t7 ici) et 0x4b48d3 (tid 3, p646) en font partie.
+0x42dfce
+0x42e0c0
+0x42e0ca
+0x43840d
+0x4b48d3
+0x58288a
+0x61ea33
+0x61ea3d
+0x63395a
+0x6bf145
+0x6bf14f
+0x6bf159
+0x6d620f
+0x6d6221
+0x702c8c
+0x7032d1
+# 2. LA CHAINE AU-DESSUS DE 0x6bf159 (les 7 [unwind-cand] de t7, toutes des retours de call) :
+#    0x6d6232 <- call 0x6bf130 ; 0x6d6189 <- call 0x6d61b0 ; 0x511ee6 <- call 0x5c6340 ;
+#    0x6b744f <- call 0x511ed0 ; 0x6eb1f1 <- call 0x6b73b0 ; 0x5cb6cc <- call 0x8f9e40 ;
+#    0x539842 <- call 0x4155b0.
+0x6d6232
+0x6d6189
+0x511ee6
+0x6b744f
+0x6eb1f1
+0x5cb6cc
+0x539842
+# 3. LES MORTS DE FIL PASSEES JAMAIS LIFTEES (runs p630-p643, grep « [unwind] tid= ») :
+#    0x492cbd <- call 0x83f9d0 (tid 8, p630_H4) ; 0x69081f <- call 0x691d50 (tid 5, p643) ;
+#    0x691c7d <- call edx (tid 5, p640) ; 0x6923dc <- call 0x692020 (tid 6, p640) ;
+#    0x69574d <- call 0x65b4d0 (tid 6/5, p630) ; 0x697212 <- call 0x4fdd40 (tid 8, p643) ;
+#    0x7635e5 <- call 0x526d90 (tid 6, p630_H3) ; 0x80adaf <- call 0x930390 (tid 7, p630_H3).
+0x492cbd
+0x69081f
+0x691c7d
+0x6923dc
+0x69574d
+0x697212
+0x7635e5
+0x80adaf

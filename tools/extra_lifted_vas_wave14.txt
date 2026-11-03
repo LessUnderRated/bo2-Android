@@ -1,0 +1,14 @@
+# Wave 14 — 2026-08-14. Reached on the GAMEPLAY path, after [SETORIGIN] places
+# the player. The shim printed "[shim] function_call: unknown target" for both in
+# one angola run (runs/clean1): 0x5609f0 ten times, 0x8652e0 four times.
+# Found by the anti-retraction rule "order the evidence you already have before
+# adding a probe" — these were sitting in an existing log, uncounted.
+#
+# Own .inc, same reason as waves 12 and 13: extra_lifted_vas.inc is regenerated
+# wholesale from tools/extra_lifted_vas.txt and write_inc OVERWRITES, so anything
+# merged into it that is not in its source list vanishes without a diagnostic.
+# (Regenerating the bulk list with these two appended ALSO fails: it re-emits
+# symbols the later wave objects already define — 'duplicate symbol _sub_4f5520'
+# and ~8 more at link.)
+5609f0
+8652e0

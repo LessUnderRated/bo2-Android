@@ -1,0 +1,17 @@
+diff --git a/lib/Arch/X86/Semantics/X87.cpp b/lib/Arch/X86/Semantics/X87.cpp
+index c124160..652ec5f 100644
+--- a/lib/Arch/X86/Semantics/X87.cpp
++++ b/lib/Arch/X86/Semantics/X87.cpp
+@@ -1336,7 +1336,11 @@ DEF_SEM(FNSTCW, M16W dst) {
+ 
+ DEF_SEM(FLDCW, M16 cwd) {
+   auto &cw = state.x87.fxsave.cwd;
+-  cw.flat = Read(cwd);
++
++  // Bit 6 of the control word is reserved and always reads back as 1 on real
++  // x87 hardware (Bochs: FLDCW forces 0x0040). MSVC's _control87 builds its word
++  // without it and its CRT later tests `fnstcw & 0x7f == 0x7f`.
++  cw.flat = Read(cwd) | 0x40;
+   cw.pc = kPrecisionSingle;
+   __remill_fpu_set_rounding(cw.rc);
+   return memory;

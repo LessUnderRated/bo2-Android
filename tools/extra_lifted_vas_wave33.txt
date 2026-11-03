@@ -1,0 +1,32 @@
+# Vague 33 — la vague 32 a créé ses PROPRES trous, et ils étaient lisibles
+# hors ligne avant même de lancer un run.
+#
+# runs/w32_ps_f est mort sur « [MISSING] block at 0x005090a6 not lifted » après
+# un longjmp. La cause est mécanique : 0x005090e5, que la vague 32 a enregistré
+# comme point d'entrée, est un bloc de DEUX octets —
+#
+#     0x005090e5: ebbf   jmp 0x5090a6
+#
+# — donc remill lifte « sauter vers 0x5090a6 », et comme 0x5090a6 n'est pas
+# enregistré il émet __remill_missing_block(0x5090a6). Fermer un trou en a
+# ouvert un autre, à un `jmp` de distance.
+#
+# L'adresse ci-dessous sort de
+#   python3 tools/harvest_missing_blocks.py --workdir boot_cache/lift_wip
+# c'est-à-dire de l'IR des fonctions que la vague 32 vient de lifter, et pas
+# d'un run.
+#
+# 🔴 Le moissonneur en avait sorti DEUX autres — 0x5536c8 et 0x553793, les
+# entrees de la table de saut `jmp [eax*4 + 0x5537a0]` de 0x5536d1. Elles sont
+# deja des points d'entree, liftees par les vagues 22 et 23, et les ajouter ici
+# a casse le lien sur « duplicate symbol '_sub_5536c8' ». Le moissonneur lit
+# l'IR, PAS le registre : c'est a wave_closure.sh de soustraire ce qui existe
+# deja, ce qu'il ne faisait pas parce qu'il lisait `nm -U boot_cache/boot` et
+# que boot n'existait pas encore (filtre vide et silencieux).
+#
+# 🔴 RÈGLE : après CHAQUE vague, faire tourner le moissonneur sur
+# boot_cache/lift_wip et replier sa sortie dans la MÊME vague. Sinon la vague
+# livre ses propres avortements, un run par trou. Ce n'est PAS
+# scripts/lift_closure.sh (qui relance le lift COMPLET, piège prouvé) :
+# scripts/wave_closure.sh ne retouche que la liste de la vague.
+0x5090a6

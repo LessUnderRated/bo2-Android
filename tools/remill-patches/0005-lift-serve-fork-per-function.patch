@@ -1,0 +1,87 @@
+diff --git a/bin/lift/Lift.cpp b/bin/lift/Lift.cpp
+index 96ea713..394e9ed 100644
+--- a/bin/lift/Lift.cpp
++++ b/bin/lift/Lift.cpp
+@@ -52,6 +52,10 @@
+ #include <string>
+ #include <system_error>
+ 
++#include <fcntl.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
+ DEFINE_string(os, REMILL_OS,
+               "Operating system name of the code being "
+               "translated. Valid OSes: linux, macos, windows, solaris.");
+@@ -80,6 +84,12 @@ DEFINE_string(bc_out, "",
+               "Path to file where the LLVM bitcode should be "
+               "saved.");
+ 
++DEFINE_bool(serve, false,
++            "Load the semantics once, then lift one function per stdin line "
++            "`<hex bytes>\\t<hex address>\\t<bc_out>\\t<ir_out>\\t<stderr file>`, "
++            "each in a child forked after the load. Prints `pid <n>` then "
++            "`exit <status>` (negative: killed by that signal) per line.");
++
+ DEFINE_string(signature, "", "Function signature \"reg_out(reg_in,...)\"");
+ DEFINE_bool(mute_state_escape, false, "Mute state escape");
+ DEFINE_bool(symbolic_regs, false, "Set registers to a symbolic value");
+@@ -298,7 +308,7 @@ int main(int argc, char *argv[]) {
+   google::InitGoogleLogging(argv[0]);
+ 
+ 
+-  if (FLAGS_bytes.empty()) {
++  if (FLAGS_bytes.empty() && !FLAGS_serve) {
+     std::cerr << "Please specify a sequence of hex bytes to -bytes."
+               << std::endl;
+     return EXIT_FAILURE;
+@@ -347,6 +357,49 @@ int main(int argc, char *argv[]) {
+ 
+   std::unique_ptr<llvm::Module> module(remill::LoadArchSemantics(arch.get()));
+ 
++  // bo2-native: loading the semantics is most of a small lift (90 of 110 ms).
++  // Everything above is the same for every function, so each request forks
++  // from here: the child is a fresh process at this point, with its own flags.
++  if (FLAGS_serve) {
++    bool child = false;
++    for (std::string line; !child && std::getline(std::cin, line);) {
++      std::istringstream req(line);
++      std::string address, err_out;
++      std::getline(req, FLAGS_bytes, '\t');
++      std::getline(req, address, '\t');
++      std::getline(req, FLAGS_bc_out, '\t');
++      std::getline(req, FLAGS_ir_out, '\t');
++      std::getline(req, err_out);
++      FLAGS_address = FLAGS_entry_address = std::stoull(address, nullptr, 16);
++      fflush(stdout);
++      fflush(stderr);
++      const pid_t pid = fork();
++      if (pid == 0) {
++        const int err = open(err_out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
++        const int nul = open("/dev/null", O_RDWR);
++        dup2(err, STDERR_FILENO);
++        dup2(nul, STDOUT_FILENO);
++        dup2(nul, STDIN_FILENO);
++        close(err);
++        close(nul);
++        child = true;
++        continue;
++      }
++      printf("pid %d\n", (int) (pid > 0 ? pid : 0));
++      fflush(stdout);
++      int status = 0;
++      if (pid < 0 || waitpid(pid, &status, 0) < 0) {
++        printf("exit 1\n");
++      } else {
++        printf("exit %d\n", WIFEXITED(status) ? WEXITSTATUS(status) : -WTERMSIG(status));
++      }
++      fflush(stdout);
++    }
++    if (!child) {
++      return EXIT_SUCCESS;
++    }
++  }
++
+   const auto mem_ptr_type = arch->MemoryPointerType();
+ 
+   Memory memory = UnhexlifyInputBytes(addr_mask);

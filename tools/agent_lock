@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Verrou coopératif entre agents (Astra, Claude, humain).
+# Tout ce qui lance un run ou edite runtime/ doit le prendre.
+# Tenu jusqu'a 'release'. Les agents appellent depuis des shells ephemeres :
+# aucun PID ne survit, donc perime = plus de AGENT_LOCK_MAX_S (2 h) ET aucun 'boot'.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOCK="${AGENT_LOCK_FILE:-$ROOT/.agent-lock}"
+MAX_S="${AGENT_LOCK_MAX_S:-7200}"
+WHO="${AGENT_NAME:-${CODEX_AGENT:-inconnu}}"
+
+stale() {  # 0 si le verrou est perime
+  [ -f "$LOCK" ] || return 0
+  pgrep -x boot >/dev/null && return 1
+  local depuis t
+  depuis=$(sed -n 's/^depuis=//p' "$LOCK" | head -1)
+  t=$(date -j -f '%Y-%m-%d %H:%M:%S' "$depuis" +%s 2>/dev/null) || return 1
+  [ $(( $(date +%s) - t )) -ge "$MAX_S" ]
+}
+
+case "${1:-status}" in
+  take)
+    if [ -f "$LOCK" ] && ! stale; then
+      echo "REFUSE — verrou deja pris :" >&2; cat "$LOCK" >&2; exit 1
+    fi
+    [ -f "$LOCK" ] && echo "(verrou perime repris)" >&2
+    printf 'agent=%s\ndepuis=%s\nraison=%s\n' \
+      "$WHO" "$(date '+%F %T')" "${2:-non precisee}" > "$LOCK"
+    echo "verrou pris par $WHO" ;;
+  release)
+    rm -f "$LOCK"; echo "verrou rendu" ;;
+  status)
+    if [ -f "$LOCK" ]; then
+      cat "$LOCK"; stale && echo "!! plus de ${MAX_S} s et aucun boot — verrou perime, 'take' le reprendra"
+    else echo "libre"; fi
+    pgrep -x boot >/dev/null && echo "!! un 'boot' tourne (pgrep -x boot)" || true ;;
+  *) echo "usage: agent_lock {take [raison]|release|status}" >&2; exit 2 ;;
+esac

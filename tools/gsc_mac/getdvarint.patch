@@ -1,0 +1,34 @@
+diff --git a/src/arc/compiler.cpp b/src/arc/compiler.cpp
+index 89a0c70..7b19ffd 100644
+--- a/src/arc/compiler.cpp
++++ b/src/arc/compiler.cpp
+@@ -1732,13 +1732,27 @@ auto compiler::emit_expr_getdvar(expr_getdvar const& exp) -> void
+ 
+ auto compiler::emit_expr_getdvarint(expr_getdvarint const& exp) -> void
+ {
+-    emit_expr(*exp.arg);
++    // bo2-native: 1.6.0 parses the argument as a list; emit its elements (one on t6)
++    if (exp.arg->is<expr_arguments>())
++    {
++        for (auto const& e : exp.arg->as<expr_arguments>().list)
++            emit_expr(*e);
++    }
++    else
++        emit_expr(*exp.arg);
+     emit_opcode(opcode::OP_GetDvarInt);
+ }
+ 
+ auto compiler::emit_expr_getdvarfloat(expr_getdvarfloat const& exp) -> void
+ {
+-    emit_expr(*exp.arg);
++    // bo2-native: 1.6.0 parses the argument as a list; emit its elements (one on t6)
++    if (exp.arg->is<expr_arguments>())
++    {
++        for (auto const& e : exp.arg->as<expr_arguments>().list)
++            emit_expr(*e);
++    }
++    else
++        emit_expr(*exp.arg);
+     emit_opcode(opcode::OP_GetDvarFloat);
+ }
+ 

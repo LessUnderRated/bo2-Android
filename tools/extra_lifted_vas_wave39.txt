@@ -1,0 +1,10 @@
+# Vague 39 — 2026-09-18. Ouverte par le PREMIER run du projet qui obtient l'arme
+# (arme_client=157085, drap[+0x10]=0x0). Le jeu a franchi la porte de
+# savannah_start et atteint du code que rien n'avait jamais execute :
+#   [MISSING] block at 0x006c85e4 not lifted   -> signal 6 a ~10 min de run.
+# 0 site d'appel direct : c'est un BLOC INTERNE (sa branche `jl 0x6c84b0`
+# reboucle), entre les entrees liftees 0x6c8481 et 0x6c88f0. remill a refuse de
+# suivre le saut direct pendant le tracage. Cas documente mot pour mot en tete
+# de tools/lift_extra.py : « registering the block as its own entry point is a
+# complete fix ».
+0x6c85e4

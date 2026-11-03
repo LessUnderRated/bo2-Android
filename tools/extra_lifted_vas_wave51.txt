@@ -1,0 +1,7 @@
+# Vague 51 — 2026-10-04. Ouverte par le run dockside de P781 (débloqué par un clic du testeur) : dès le début de partie,
+# 565 lignes après SV-DIRECTCONNECT, le jeu appelle à chaque image trois rappels jamais liftés (appels indirects) :
+# `[shim] function_call: unknown target 0x7f8b10 / 0x7f8db0 / 0x7f8ed0` ×1667 chacun, puis [RUNAWAY] (5001).
+# Les trois lisent [0x27fa0d0] et un objet edi+0xb8 ; tous leurs appelés directs sont déjà liftés.
+0x7f8b10:29e  # deux sorties (ret 0x7f8d85, ret 0x7f8dad)
+0x7f8db0:115  # ret 0x7f8ec4
+0x7f8ed0:59   # ret 0x7f8f28

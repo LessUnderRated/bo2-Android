@@ -1,0 +1,5 @@
+# wave37 — frontiere vue par le bras -O1 (run o1c, 2026-09-17)
+# [MISSING] block at 0x006c8638 : bloc de repli apres `test byte[ebp+0x34],0x80`
+# a 0x6c8634, dans le code de rendu atteint par tid4. Mort bruyante (signal 6)
+# a ~3 min de jeu.
+6c8638

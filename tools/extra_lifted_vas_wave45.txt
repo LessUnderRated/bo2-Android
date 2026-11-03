@@ -1,0 +1,75 @@
+# Vague 45 — 2026-09-26. Ouverte par runs/p662_angola_clean_jq-snd-snddec-srv-backend_2_100643
+# (srvbe, bin C15+vagues 43/44+C16 f613a867, capot ouvert). Carte jamais chargee : Main prend un
+# longjmp « arene pleine » (from=0x004af4c4 -> setjmp 0x6404e0, env=0x0010e6c8 = Com_Frame IMBRIQUE)
+# et la remontee meurt :
+#
+#   [unwind] tid=0 NO LIFTED BLOCK at 0x005cb708 (hop 12)
+#   [unwind-cand] tid=0 esp=0x0010ea90 ... 006aacc4 006acd78 004a0001 00656c62 00900000
+#
+# 0x5cb708 = retour de `call 0x8fbae0` (attente qui pompe un Com_Frame, comme 0x484620) ;
+# 0x6aacc4 = retour de `call 0x582880` (qui appelle 0x484620) ; 0x6acd78 = retour de `call 0x6aacb0`.
+# Les vagues 43/44 bouchaient les trous un par un. Celle-ci prend la FERMETURE : tous les retours de
+# call direct vers les deux pompes (0x484620, 0x8fbae0) et vers leurs appelants, recursivement,
+# jusqu'a convergence (9 niveaux, 103 retours ; 60 absents des listes de vagues, dont 10 deja dans unwind_extra.o, commentes ci-dessous : 50 lifts). Chaque site est
+# verifie `call rel32` par decodage depuis trois departs (scratchpad c15/fermeture.py).
+# Limite : les appels indirects (vtable) sont invisibles ici.
+0x41e839  # prof 2, retour de call 0x6bf130
+# deja dans unwind_extra.o : 0x437bcb  # prof 7, retour de call 0x583900
+0x438fdc  # prof 1, retour de call 0x8fbae0
+0x4714f6  # prof 3, retour de call 0x5e6ec0
+# deja dans unwind_extra.o : 0x4b488f  # prof 1, retour de call 0x484620
+0x583a69  # prof 6, retour de call 0x62e9f0
+0x583a82  # prof 6, retour de call 0x62e9f0
+# deja dans unwind_extra.o : 0x589d78  # prof 8, retour de call 0x437960
+0x5cb708  # prof 1, retour de call 0x8fbae0
+# deja dans unwind_extra.o : 0x5cb748  # prof 1, retour de call 0x8fbae0
+0x5e6f83  # prof 2, retour de call 0x438400
+0x617e9b  # prof 3, retour de call 0x5e6ec0
+# deja dans unwind_extra.o : 0x62eb3b  # prof 5, retour de call 0x776620
+0x630bc5  # prof 3, retour de call 0x5e6ec0
+0x63d60b  # prof 3, retour de call 0x6680d0
+0x65b4e6  # prof 2, retour de call 0x5cb6c0
+0x6680f2  # prof 2, retour de call 0x61e9f0
+0x6aacc4  # prof 2, retour de call 0x582880
+# deja dans unwind_extra.o : 0x6ac32e  # prof 1, retour de call 0x484620
+0x6acd6e  # prof 2, retour de call 0x633950
+0x6acd78  # prof 3, retour de call 0x6aacb0
+0x6b8815  # prof 3, retour de call 0x65b4d0
+0x6b8919  # prof 3, retour de call 0x65b4d0
+0x6b8a0f  # prof 3, retour de call 0x65b4d0
+0x6b8c18  # prof 4, retour de call 0x6b86f0
+0x6b8c67  # prof 4, retour de call 0x6fa820
+0x6b8c71  # prof 4, retour de call 0x6fa730
+0x6b8ca4  # prof 4, retour de call 0x6b88b0
+0x6b8cb7  # prof 4, retour de call 0x6faaa0
+0x6b8cdd  # prof 4, retour de call 0x6b88b0
+0x6b8d06  # prof 4, retour de call 0x6b88b0
+0x6b8d2f  # prof 4, retour de call 0x6b88b0
+0x6b8d5b  # prof 4, retour de call 0x6b88b0
+0x6b8d87  # prof 4, retour de call 0x6b88b0
+0x6b8db3  # prof 4, retour de call 0x6b88b0
+0x6b8dd9  # prof 4, retour de call 0x6b89d0
+0x6b8dff  # prof 4, retour de call 0x6b89d0
+0x6b8eda  # prof 4, retour de call 0x6b88b0
+0x6b8f0c  # prof 4, retour de call 0x6b88b0
+0x6b8f3e  # prof 4, retour de call 0x6b88b0
+0x6b8f70  # prof 4, retour de call 0x6b88b0
+0x6b8fa2  # prof 4, retour de call 0x6b88b0
+0x6b8fd4  # prof 4, retour de call 0x6b88b0
+0x6b9085  # prof 4, retour de call 0x6b89d0
+0x6b91bf  # prof 4, retour de call 0x6b89d0
+0x6b91e5  # prof 4, retour de call 0x6b89d0
+0x6b921f  # prof 4, retour de call 0x6b89d0
+0x6b9245  # prof 4, retour de call 0x6b89d0
+0x6b9800  # prof 5, retour de call 0x6b8bc0
+0x6ca3d4  # prof 5, retour de call 0x6b8bc0
+0x6ca460  # prof 6, retour de call 0x6b97f0
+0x6fa77d  # prof 3, retour de call 0x65b4d0
+0x6fa861  # prof 3, retour de call 0x65b4d0
+0x6faace  # prof 3, retour de call 0x65b4d0
+# deja dans unwind_extra.o : 0x775fa0  # prof 3, retour de call 0x6680d0
+0x775fe6  # prof 3, retour de call 0x41e690
+# deja dans unwind_extra.o : 0x7767eb  # prof 4, retour de call 0x775f20
+# deja dans unwind_extra.o : 0x77684c  # prof 4, retour de call 0x775f20
+0x779333  # prof 6, retour de call 0x62e9f0
+# deja dans unwind_extra.o : 0x80b013  # prof 6, retour de call 0x62e9f0
