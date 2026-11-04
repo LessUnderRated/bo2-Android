@@ -262,6 +262,95 @@ static NSString* msl_cache_path(const std::string& msl, const char* ext) {
                [NSString stringWithFormat:@"%016llx.%s", (unsigned long long)msl_fnv64(msl), ext]];
 }
 
+// Shaders par lots (11-04). Sans xcrun metal (un joueur sans Xcode) aucun metallib n'existe : tout passe par
+// newLibraryWithSource, ~0,44 s de CPU par shader à froid, dont ~0,37 s pour lire <metal_stdlib>. Un lot de N sources,
+// chacune dans son namespace (sK::xlatMtlMain), ne lit l'en-tête qu'une fois : 40 shaders du multi, 3,0 s au lieu de
+// 17,4 s sur un cœur. Mesuré sur toutes les sources des trois modes : HLSLcc n'écrit que deux #define, identiques
+// partout ; une source qui en aurait un autre (il fuirait dans les suivantes) est compilée seule.
+static const std::string kMslTete = "#include <metal_stdlib>\n#include <metal_texture>\nusing namespace metal;\n";
+static MTLCompileOptions* msl_opts() {
+    static MTLCompileOptions* o = [] { MTLCompileOptions* x = [MTLCompileOptions new]; x.preserveInvariance = YES; return x; }();   // P854
+    return o;
+}
+static bool msl_groupable(const std::string& s) {
+    if (s.compare(0, kMslTete.size(), kMslTete)) return false;
+    for (size_t p = 0; (p = s.find("#define", p)) != std::string::npos; p += 7) {
+        const std::string l = s.substr(p, s.find('\n', p) - p);
+        if (l != "#define fma(a,b,c) ((a) * (b) + (c))" && l != "#define XLT_REMAP_O {0, 1, 2, 3, 4, 5, 6, 7}") return false;
+    }
+    return true;
+}
+// fn[i] = xlatMtlMain de *src[i] : un seul lot si possible, sinon (ou si le lot échoue) source par source.
+static void msl_compile(const std::string* const* src, size_t n, __strong id<MTLFunction>* fn, std::string* why) {
+    bool lot = n > 1;
+    for (size_t i = 0; i < n && lot; i++) lot = msl_groupable(*src[i]);
+    if (lot) {
+        std::string s = kMslTete;
+        for (size_t i = 0; i < n; i++)
+            s += "namespace s" + std::to_string(i) + " {\n" + src[i]->substr(kMslTete.size()) + "\n}\n";
+        id<MTLLibrary> l = [g_device newLibraryWithSource:@(s.c_str()) options:msl_opts() error:nil];
+        for (size_t i = 0; l && i < n; i++)
+            fn[i] = [l newFunctionWithName:[NSString stringWithFormat:@"s%zu::xlatMtlMain", i]];
+    }
+    for (size_t i = 0; i < n; i++) {
+        if (fn[i]) continue;
+        NSError* e = nil;
+        fn[i] = [[g_device newLibraryWithSource:@(src[i]->c_str()) options:msl_opts() error:&e]
+                    newFunctionWithName:@"xlatMtlMain"];
+        if (!fn[i] && why) why[i] = e ? [[e localizedDescription] UTF8String] : "no function";
+    }
+}
+
+// Au lancement, en tâche de fond pendant le menu : les shaders des parties précédentes qui n'ont pas de metallib
+// (msl_cache/<h>.msl seul) sont compilés par lots ; la pompe les prend ici au lieu de les compiler au chargement de la
+// carte. Lot = h % kMslSeaux, trié : la partie suivante soumet les mêmes sources, que le cache Metal de macOS rend en
+// ~2 ms par lot, et un shader nouveau ne refroidit que son lot. BO2_MSL_WARM=0 : pas de préchauffe.
+static constexpr size_t kMslSeaux = 128;
+static std::mutex g_warm_mu;
+static std::unordered_map<uint64_t, id<MTLFunction>> g_warm;
+std::atomic<uint64_t> g_msl_from_warm{0};
+static id<MTLFunction> msl_warm_get(uint64_t h) {
+    std::lock_guard<std::mutex> lk(g_warm_mu);
+    auto it = g_warm.find(h);
+    return it == g_warm.end() ? nil : it->second;
+}
+static void msl_warm_start() {
+    if (!bo2_env_on("BO2_MSL_WARM", true)) return;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        const double t0 = CACurrentMediaTime();
+        NSString* dir = [msl_cache_path("", "msl") stringByDeletingLastPathComponent];
+        NSFileManager* fm = [NSFileManager defaultManager];
+        auto seaux = std::make_shared<std::vector<std::vector<std::pair<uint64_t, std::string>>>>(kMslSeaux);
+        size_t total = 0;
+        for (NSString* f in [[fm contentsOfDirectoryAtPath:dir error:nil] sortedArrayUsingSelector:@selector(compare:)]) {
+            if (![f hasSuffix:@".msl"]) continue;
+            NSString* p = [dir stringByAppendingPathComponent:f];
+            if ([fm fileExistsAtPath:[[p stringByDeletingPathExtension] stringByAppendingPathExtension:@"metallib"]]) continue;
+            NSString* s = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:nil];
+            if (!s) continue;
+            const uint64_t h = strtoull([f UTF8String], nullptr, 16);
+            (*seaux)[h % kMslSeaux].emplace_back(h, [s UTF8String]);
+            total++;
+        }
+        if (!total) return;
+        std::atomic<size_t> ok{0};
+        std::atomic<size_t>* pok = &ok;
+        dispatch_apply(kMslSeaux, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^(size_t k) {
+            const auto& sx = (*seaux)[k];
+            if (sx.empty()) return;
+            std::vector<const std::string*> src;
+            for (const auto& e : sx) src.push_back(&e.second);
+            std::vector<id<MTLFunction>> fn(sx.size());
+            msl_compile(src.data(), src.size(), fn.data(), nullptr);
+            std::lock_guard<std::mutex> lk(g_warm_mu);
+            for (size_t i = 0; i < sx.size(); i++)
+                if (fn[i]) { g_warm[sx[i].first] = fn[i]; ++*pok; }
+        });
+        fprintf(stderr, "[MSL-WARM] %zu/%zu shaders des parties precedentes compiles en tache de fond, %.1f s\n",
+                ok.load(), total, CACurrentMediaTime() - t0);
+    });
+}
+
 id<MTLRenderPipelineState> g_ui_pipe = nil;
 id<MTLBuffer>              g_ui_vbuf = nil;
 size_t                     g_ui_vbuf_cap = 0;
@@ -2749,6 +2838,7 @@ extern "C" bool gfx_window_open(int width, int height) {
             return false;
         }
         g_queue = [g_device newCommandQueue];
+        msl_warm_start();
 
         // A plain executable is not a bundled .app; Regular activation policy is
         // what lets it own a real window and take focus anyway.
@@ -4723,33 +4813,51 @@ extern "C" bool gfx_pump_once() {
               smpslots.swap(g_smpslot_pending); smps.swap(g_sampler_pending); }
             for (auto& kv : smps) g_sampreg[kv.first] = kv.second;   // P805
             // Le lot en parallèle (3,85× sur 8 cœurs, P770) : le fil principal le compilait shader par shader.
-            std::vector<id<MTLLibrary>> libs(take.size());
+            // D'abord le metallib (msl_cache.sh) ou la préchauffe ; le reste est compilé par lots (msl_compile), au
+            // plus huit lots pour garder les cœurs occupés, au plus 32 sources par lot.
+            std::vector<id<MTLFunction>> fns(take.size());
             std::vector<std::string> why(take.size());
             const ShaderStage* tk = take.data();
-            __strong id<MTLLibrary>* pl = libs.data();
-            std::string* pw = why.data();
+            __strong id<MTLFunction>* pf = fns.data();
             const double tm0 = CACurrentMediaTime();
             dispatch_apply(take.size(), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t i) {
                 if (g_shader_fn.count(tk[i].obj)) return;
-                pl[i] = [g_device newLibraryWithURL:[NSURL fileURLWithPath:msl_cache_path(tk[i].msl, "metallib")]
-                                              error:nil];
-                if (pl[i]) { g_msl_from_cache++; return; }
-                NSError* e = nil;
-                static MTLCompileOptions* invariant_opts = [] { MTLCompileOptions* o = [MTLCompileOptions new]; o.preserveInvariance = YES; return o; }();   // P854
-                pl[i] = [g_device newLibraryWithSource:@(tk[i].msl.c_str()) options:invariant_opts error:&e];
-                if (pl[i]) {
-                    NSString* src = msl_cache_path(tk[i].msl, "msl");
-                    [[NSFileManager defaultManager] createDirectoryAtPath:[src stringByDeletingLastPathComponent]
-                                              withIntermediateDirectories:YES attributes:nil error:nil];
-                    [@(tk[i].msl.c_str()) writeToFile:src atomically:YES encoding:NSUTF8StringEncoding error:nil];
-                } else if (e) pw[i] = [[e localizedDescription] UTF8String];
+                id<MTLLibrary> l = [g_device newLibraryWithURL:[NSURL fileURLWithPath:msl_cache_path(tk[i].msl, "metallib")]
+                                                         error:nil];
+                if ((pf[i] = [l newFunctionWithName:@"xlatMtlMain"])) { g_msl_from_cache++; return; }
+                if ((pf[i] = msl_warm_get(msl_fnv64(tk[i].msl)))) g_msl_from_warm++;
             });
+            std::vector<size_t> at;
+            std::vector<const std::string*> src;
+            for (size_t i = 0; i < take.size(); i++)
+                if (!fns[i] && !g_shader_fn.count(take[i].obj)) { at.push_back(i); src.push_back(&take[i].msl); }
+            if (!src.empty()) {
+                const size_t lot = std::min<size_t>((src.size() + 7) / 8, 32);
+                std::vector<id<MTLFunction>> got(src.size());
+                std::vector<std::string> gwhy(src.size());
+                const std::string* const* ps = src.data();
+                __strong id<MTLFunction>* pg = got.data();
+                std::string* pw = gwhy.data();
+                const size_t n = src.size();
+                dispatch_apply((n + lot - 1) / lot, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t k) {
+                    const size_t b = k * lot, m = std::min(lot, n - b);
+                    msl_compile(ps + b, m, pg + b, pw + b);
+                    NSFileManager* fm = [NSFileManager defaultManager];
+                    for (size_t j = b; j < b + m; j++) {
+                        if (!pg[j]) continue;
+                        NSString* f = msl_cache_path(*ps[j], "msl");
+                        [fm createDirectoryAtPath:[f stringByDeletingLastPathComponent]
+                      withIntermediateDirectories:YES attributes:nil error:nil];
+                        [@(ps[j]->c_str()) writeToFile:f atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                    }
+                });
+                for (size_t j = 0; j < n; j++) { fns[at[j]] = got[j]; why[at[j]] = gwhy[j]; }
+            }
             g_win_msl_ms += (CACurrentMediaTime() - tm0) * 1000.0;
             for (size_t i = 0; i < take.size(); i++) {
                 auto& st = take[i];
                 if (g_shader_fn.count(st.obj)) continue;
-                id<MTLLibrary> lib = libs[i];
-                id<MTLFunction> fn = lib ? [lib newFunctionWithName:@"xlatMtlMain"] : nil;
+                id<MTLFunction> fn = fns[i];
                 if (fn) {
                     g_shader_fn[st.obj] = fn;
                     ShaderRec rec; rec.fn = fn; rec.msl_h = msl_fnv64(st.msl);
@@ -4773,11 +4881,12 @@ extern "C" bool gfx_pump_once() {
                     }
                     g_shader_rec[st.obj] = rec;
                     if (++g_msl_compiled <= 3 || g_msl_compiled % 100 == 0)
-                        fprintf(stderr, "[MSL] compiled %s obj=%08x (%llu ok, %llu failed, %llu du cache)\n",
+                        fprintf(stderr, "[MSL] compiled %s obj=%08x (%llu ok, %llu failed, %llu du cache, %llu prechauffes)\n",
                                 st.is_pixel ? "PS" : "VS", st.obj,
                                 (unsigned long long)g_msl_compiled,
                                 (unsigned long long)g_msl_compile_failed,
-                                (unsigned long long)g_msl_from_cache.load());
+                                (unsigned long long)g_msl_from_cache.load(),
+                                (unsigned long long)g_msl_from_warm.load());
                 } else {
                     if (++g_msl_compile_failed <= 5)
                         fprintf(stderr, "[MSL] Metal REJECTED %s obj=%08x: %s\n",
