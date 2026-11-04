@@ -307,11 +307,18 @@ plays when you own it and its files are in your game folder.
 
 1. **This beta**: the three modes from a fresh Steam copy, on other Macs than the one that built them. Your reports
    (Mac model, frame rate, what broke) decide what comes next.
-2. **No Terminal**: prebuilt tools in the releases, so that installing means opening an app and pointing it at the game.
-3. **Faster, without heat**: the campaign is bound by the scheduler thread, not by rendering; multiplayer with 11 bots
-   is bound by the server thread. Native rewrites of the hottest functions come next.
-4. **Together**: real UDP sockets for Zombies co-op, Grief and Turned, and multiplayer over LAN.
-5. **Later**: MetalFX, post-processing when the frame is presented, and replacement textures loaded from the player's own copy.
+2. **No Terminal**: the release app carries its tools, so that installing means opening an app and pointing it at the
+   game (macOS 26 or later; macOS 14 and 15 keep the Terminal install).
+3. **Fully translated**: the 46 code blocks that still run through the Unicorn interpreter are translated ahead of time.
+4. **Shorter conversion**: the first run takes about 2.5 hours on an M1 today.
+5. **No shader wait**: shaders built before the first match, instead of at launch (about 3 minutes in multiplayer) and
+   during play (freezes when a new effect appears).
+6. **Faster, without heat**: the campaign is bound by the scheduler thread, not by rendering; multiplayer with 11 bots
+   is bound by the server thread. Native rewrites of the hottest functions come next, then frame rates above 60 for
+   120 Hz screens.
+7. **Controllers**: vibration and aim assist.
+8. **Together**: real UDP sockets for Zombies co-op, Grief and Turned, and multiplayer over LAN.
+9. **Later**: MetalFX, post-processing when the frame is presented, and replacement textures loaded from the player's own copy.
 
 <img src="docs/assets/rule-11.svg" alt="" width="100%">
 
