@@ -45,6 +45,7 @@ cat > "$APP/Contents/MacOS/BlackOpsII" <<'EOF'
 R="$(cd "$(dirname "$0")/../Resources" && pwd)"
 W="$HOME/.bo2-native/app-local"
 exec >> "$HOME/Library/Logs/BlackOpsII.log" 2>&1
+export PATH="$PATH:/opt/homebrew/bin"   # launched by Finder: no Homebrew cmake/ninja; appended, so python3 stays the one that passed the capstone check
 echo "--- $(date +%H:%M:%S) bundle $(cat "$R/version")"
 case "$(defaults read -g AppleLanguages 2>/dev/null | tr -dc 'a-zA-Z-\n' | sed -n 2p | cut -c1-2)" in   # folder prompt, no exe, copy failed
   fr) T1="Choisissez le dossier de Black Ops II (celui qui contient t6sp.exe)"; T2="Aucun t6sp.exe dans"; T3="Copie impossible vers";;
