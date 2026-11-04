@@ -19,8 +19,10 @@ say "0 %  Remill"
 bash scripts/build_remill.sh || die "Remill build failed (see $BC/remill.log)"
 say "10 %  Remill ready"
 [ -s $BC/hlslcc_build/libhlslcc.dylib ] || {
-  cmake -S third_party/HLSLcc -B $BC/hlslcc_build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 > /dev/null
-  cmake --build $BC/hlslcc_build -j$J --target hlslcc > /dev/null; }
+  cmake -S third_party/HLSLcc -B $BC/hlslcc_build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 > /dev/null \
+  && cmake --build $BC/hlslcc_build -j$J --target hlslcc > /dev/null; } || die "HLSLcc build failed (see preparation.log)"
+# CMAKE_POLICY_VERSION_MINIMUM: HLSLcc asks for CMake 2.8, which CMake 4 refuses (issue #2)
 [ -s runtime/win32/snd_reverb_gen.inc ] || BO2_REVERB_STEAM=1 bash scripts/gen_snd_reverb.sh
 
 P=10
