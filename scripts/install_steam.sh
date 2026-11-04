@@ -12,6 +12,7 @@ die(){ echo "[prepare] ❌ $*"; exit 1; }
 [ -f "$D/t6sp.exe" ] || die "$D/t6sp.exe not found: this is not a Black Ops 2 folder"
 verifie(){  # <image> <expected SHA-256>
   [ -f "$S/$1" ] || die "missing $S/$1: put the three Steam exes, SteamStub wrapper removed, in $S/ under these names (README, Installation)"
+  head -c 4096 "$S/$1" | grep -q -a '\.bind' && die "$S/$1 still has its SteamStub wrapper: it is the right Steam version, only the wrapper must be removed (README, Install)"
   [ "$(shasum -a 256 "$S/$1" | cut -c1-64)" = "$2" ] || die "$S/$1 is not the Steam build this port translates: use the current Steam version, with only the SteamStub wrapper removed"
   echo "ok: $1"
 }
