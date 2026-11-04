@@ -307,17 +307,18 @@ plays when you own it and its files are in your game folder.
 
 1. **This beta**: the three modes from a fresh Steam copy, on other Macs than the one that built them. Your reports
    (Mac model, frame rate, what broke) decide what comes next.
-2. **Choose your modes**: convert only the campaign, Zombies or multiplayer, and add the others later
-   ([#3](https://github.com/adrbn/bo2-mac/issues/3)).
-3. **No Terminal**: one app to download and open, then drop the game folder on its window. It carries its tools
+2. **No Terminal**: one app to download and open, then drop the game folder on its window. It carries its tools
    already built, so nothing is compiled on your Mac but the game itself (macOS 26 or later; macOS 14 and 15 keep the
    Terminal install).
-4. **Fully translated**: the 46 code blocks that still run through the Unicorn interpreter are translated ahead of
-   time, and every translated instruction is checked against the interpreter.
-5. **Shorter conversion** (about 2.5 hours on an M1 today): the code the three modes share converted once instead of
-   three times, an update converting only what changed, and less optimisation for code that rarely runs.
-6. **No shader wait**: shaders built before the first match, instead of at launch (about 3 minutes in multiplayer) and
+3. **Fully translated**: the 46 code blocks that still run through the Unicorn interpreter are translated ahead of
+   time, and every translated instruction is checked against the interpreter;
+   any translated function can be sent back to the interpreter, to find a wrong one by halving.
+4. **No shader wait**: shaders built before the first match, instead of at launch (about 3 minutes in multiplayer) and
    during play (freezes when a new effect appears).
+5. **Choose your modes**: convert only the campaign, Zombies or multiplayer, and add the others later
+   ([#3](https://github.com/adrbn/bo2-mac/issues/3)).
+6. **Shorter conversion** (about 2.5 hours on an M1 today): the code the three modes share converted once instead of
+   three times, an update converting only what changed, and less optimisation for code that rarely runs.
 7. **Faster, without heat**: the campaign is bound by the scheduler thread, not by rendering; multiplayer with 11 bots
    is bound by the server thread. Native rewrites of the hottest functions come next, then frame rates above 60 for
    120 Hz screens.
