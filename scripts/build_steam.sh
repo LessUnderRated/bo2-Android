@@ -11,6 +11,13 @@ F=$(( M * 3 / 4 )); [ "$F" -ge 1 ] || F=1   # fold slices are the memory-hungry 
 say(){ echo "[prepare] $*"; }
 die(){ say "❌ $*"; exit 1; }
 libre(){ df -k "$ROOT" | awk 'NR==2{print int($4/1048576)}'; }
+tue(){ local c; for c in $(pgrep -P "$1"); do tue "$c"; done; kill -9 "$1" 2>/dev/null; }
+# veille <log> <command…>: runs the command, killed with its children if its log stays still for 45 min. A stuck
+# lift showed 38 % all night (issue #4); the longest silent stretch it legitimately has is the final llvm-link (≤ 20 min).
+veille(){ local log=$1 p; shift; "$@" > "$log" 2>&1 & p=$!
+  while kill -0 $p 2>/dev/null; do sleep ${VEILLE_PAS:-30}
+    [ $(( $(date +%s) - $(stat -f %m "$log") )) -lt ${VEILLE_S:-2700} ] || { tue $p; wait $p; return 124; }; done
+  wait $p; }
 garde(){ [ "$(libre)" -ge 8 ] || die "less than 8 GB free ($(libre)): free up some space, then run again (it resumes)"; }
 for d in llvm@17 cmake ninja libvpx unicorn; do [ -d /opt/homebrew/opt/$d ] || die "missing: brew install $d"; done
 python3 -c "import capstone" 2>/dev/null || die "missing: pip3 install capstone"
@@ -34,7 +41,8 @@ for spec in "sps 9211 t6sp" "zms 12533 t6zm" "mps 12664 t6mp"; do
     B="LIFT_PISTE_ENTIERE=1 BO2_TARGET=$t BOOT_WORKDIR=$W LIFT_ROOTS_FILE=tools/lift_roots_$t.txt LIFT_RUNWAY_FILE=$W/runway_vide.txt"
     if [ ! -f $W/.plie ]; then
       garde; say "$P %  $3: lift"
-      env $B python3 -u tools/boot.py -n $N -j $J --build-only > $W/lift.log 2>&1 || die "$3 lift failed (see $W/lift.log)"
+      veille $W/lift.log env $B python3 -u tools/boot.py -n $N -j $J --build-only || { [ $? = 124 ] \
+        && die "$3 lift made no progress for 45 min (see $W/lift.log)"; die "$3 lift failed (see $W/lift.log)"; }
       garde; say "$((P + 15)) %  $3: fold"
       BOOT_WORKDIR=$W scripts/fold_lift.sh $(( J < F ? J : F )) > $W/fold.log 2>&1 || die "$3 fold failed (see $W/fold.log)"
       mv ${W}_fold/lifted.o $W/lifted.o; rm -rf ${W}_fold; touch $W/.plie
