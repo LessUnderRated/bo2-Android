@@ -5,7 +5,7 @@ set up a fake TEB/PEB, and execute the entry point. Trace every import
 and stub call to see how far the game gets before crashing.
 """
 import os, sys, subprocess, tempfile, csv, re, time, struct, glob, select
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 import multiprocessing
 import faulthandler, signal
 # `kill -USR1 <pid>` prints where this process waits, lift workers included (fork keeps it): build_steam.sh's watchdog
@@ -1325,15 +1325,27 @@ def main():
     else:
         # fork, pas spawn : sous spawn le pool se bloque apres ~32 taches (memoire bo2-boot-py-pool-hangs) ;
         with ProcessPoolExecutor(max_workers=args.jobs, mp_context=multiprocessing.get_context("fork")) as ex:
-            futs = {ex.submit(lift_one, a): a for a in lift_args}
-            for i, fut in enumerate(as_completed(futs)):
-                va, bc, success, err = fut.result()
-                if success:
-                    bc_files.append(bc); ok += 1
-                else:
-                    fail += 1
-                if (i+1) % 500 == 0 or (i+1) == len(functions):
-                    print(f"  [{i+1}/{len(functions)}] {ok} ok, {fail} fail, {time.time()-start:.0f}s")
+            # A few tasks per worker in flight, never all 55 000 at once: each submit() writes to the pool's wakeup
+            # pipe, and once it is full the pool can freeze for good at 0 % CPU (CPython gh-105829, not fixed in 3.9;
+            # issue #4: 30 functions, then nothing all night).
+            todo, en_vol, i = iter(lift_args), set(), 0
+            while True:
+                for a in todo:
+                    en_vol.add(ex.submit(lift_one, a))
+                    if len(en_vol) >= 8 * args.jobs:
+                        break
+                if not en_vol:
+                    break
+                faits, en_vol = wait(en_vol, return_when=FIRST_COMPLETED)
+                for fut in faits:
+                    i += 1
+                    va, bc, success, err = fut.result()
+                    if success:
+                        bc_files.append(bc); ok += 1
+                    else:
+                        fail += 1
+                    if i % 500 == 0 or i == len(functions):
+                        print(f"  [{i}/{len(functions)}] {ok} ok, {fail} fail, {time.time()-start:.0f}s")
     print(f"Lift: {ok}/{len(functions)} ({time.time()-start:.0f}s)")
     if os.environ.get("BO2_LIFT_ONLY"):   # boucle recolte -> lift jusqu'a point fixe, sans lier a chaque tour
         return
