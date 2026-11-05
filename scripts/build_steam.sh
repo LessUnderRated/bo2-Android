@@ -5,9 +5,10 @@
 set -eu
 cd "$(dirname "$0")/.."
 ROOT=$PWD; BC=boot_cache; S=~/.bo2-native/steam
-C=$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || sysctl -n hw.ncpu); M=$(( $(sysctl -n hw.memsize) >> 32 ))
+# Every core, efficiency ones included, and one job per 2 GB. Measured on an M1 (8 cores, 16 GB), 4 -> 8 jobs: lift
+# -38 %, fold -37 %, at least 40 % of memory still free. A fold slice peaks at 260 MB, the biggest one (mps) at 1.1 GB.
+C=$(sysctl -n hw.ncpu); M=$(( $(sysctl -n hw.memsize) >> 31 ))
 J=${J:-$(( C < M ? C : M ))}; [ "$J" -ge 1 ] || J=1; export J
-F=$(( M * 3 / 4 )); [ "$F" -ge 1 ] || F=1   # fold slices are the memory-hungry step: 3 at 16 GB, more on larger Macs (only 16 GB measured)
 say(){ echo "[prepare] $*"; }
 die(){ say "❌ $*"; exit 1; }
 libre(){ df -k "$ROOT" | awk 'NR==2{print int($4/1048576)}'; }
@@ -49,7 +50,7 @@ for spec in "sps 9211 t6sp" "zms 12533 t6zm" "mps 12664 t6mp"; do
       veille $W/lift.log env $B python3 -u tools/boot.py -n $N -j $J --build-only || { [ $? = 124 ] \
         && die "$3 lift made no progress for 45 min (see $W/lift.log)"; die "$3 lift failed (see $W/lift.log)"; }
       garde; say "$((P + 15)) %  $3: fold"
-      BOOT_WORKDIR=$W scripts/fold_lift.sh $(( J < F ? J : F )) > $W/fold.log 2>&1 || die "$3 fold failed (see $W/fold.log)"
+      BOOT_WORKDIR=$W scripts/fold_lift.sh $J > $W/fold.log 2>&1 || die "$3 fold failed (see $W/fold.log)"
       mv ${W}_fold/lifted.o $W/lifted.o; rm -rf ${W}_fold; touch $W/.plie
       find $W -maxdepth 1 \( -name 'func_*.bc' -o -name 'func_*.bc.fixed' -o -name 'batch_*.bc' \) -delete   # the link only needs lifted.o and bc_files.txt
     fi
