@@ -321,7 +321,11 @@ plays when you own it and its files are in your game folder.
    time, and every translated instruction is checked against the interpreter;
    any translated function can be sent back to the interpreter, to find a wrong one by halving.
 4. **No shader wait**: shaders built before the first match, instead of at launch (about 3 minutes in multiplayer) and
-   during play (freezes when a new effect appears).
+   during play (freezes when a new effect appears). Started: shaders now compile in batches, and the ones from the
+   last sessions compile in the background at launch. In multiplayer on an M1 without Xcode (a few tries, not a
+   benchmark), shader compiling during the first two minutes of a match went from 18–25 s to 10–14 s on a first
+   launch and about 5 s on the next one; freezes over 300 ms went from 15–22 to 13–15, then 7. The first launch
+   still freezes about as often.
 5. **Shorter conversion** (about 2.5 hours on an M1 today): the code the three modes share converted once instead of
    three times, an update converting only what changed, and less optimisation for code that rarely runs.
 6. **Faster, without heat**: the campaign is bound by the scheduler thread, not by rendering; multiplayer with 11 bots
