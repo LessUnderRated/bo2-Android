@@ -7,6 +7,10 @@ and stub call to see how far the game gets before crashing.
 import os, sys, subprocess, tempfile, csv, re, time, struct, glob, select
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
+import faulthandler, signal
+# `kill -USR1 <pid>` prints where this process waits, lift workers included (fork keeps it): build_steam.sh's watchdog
+# sends it before killing a lift that stopped moving (issue #4).
+faulthandler.register(signal.SIGUSR1, all_threads=True)
 from capstone import Cs, CS_ARCH_X86, CS_MODE_32, CS_OP_IMM
 
 # Self-recursion de-hang. remill-lift's trace lifter FOLLOWS direct calls whose

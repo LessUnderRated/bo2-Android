@@ -14,9 +14,11 @@ libre(){ df -k "$ROOT" | awk 'NR==2{print int($4/1048576)}'; }
 tue(){ local c; for c in $(pgrep -P "$1"); do tue "$c"; done; kill -9 "$1" 2>/dev/null; }
 # veille <log> <command…>: runs the command, killed with its children if its log stays still for 45 min. A stuck
 # lift showed 38 % all night (issue #4); the longest silent stretch it legitimately has is the final llvm-link (≤ 20 min).
+# Before the kill, each python of the tree writes where it waits into the log (SIGUSR1, tools/boot.py), one at a time.
+pile(){ local c; kill -USR1 "$1" 2>/dev/null && sleep 1; for c in $(pgrep -P "$1"); do pile "$c"; done; }
 veille(){ local log=$1 p; shift; "$@" > "$log" 2>&1 & p=$!
   while kill -0 $p 2>/dev/null; do sleep ${VEILLE_PAS:-30}
-    [ $(( $(date +%s) - $(stat -f %m "$log") )) -lt ${VEILLE_S:-2700} ] || { tue $p; wait $p; return 124; }; done
+    [ $(( $(date +%s) - $(stat -f %m "$log") )) -lt ${VEILLE_S:-2700} ] || { pile $p; tue $p; wait $p; return 124; }; done
   wait $p; }
 garde(){ [ "$(libre)" -ge 8 ] || die "less than 8 GB free ($(libre)): free up some space, then run again (it resumes)"; }
 for d in llvm@17 cmake ninja libvpx unicorn; do [ -d /opt/homebrew/opt/$d ] || die "missing: brew install $d"; done
