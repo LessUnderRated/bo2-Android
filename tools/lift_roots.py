@@ -257,17 +257,36 @@ class _Closure:
         return seen
 
 
+def _dword_hits(pe, va: int) -> list[int]:
+    """Every file offset where the dword `va` sits, at any alignment, in order: what `raw.find` in a loop returns.
+    One scan of the 12 MB image per address was 95 % of the lift's first 10 minutes (12 k addresses, profiled on
+    t6mp); the dwords that point into code are indexed once instead (~150 k offsets, about 1 s)."""
+    raw = pe._raw
+    r = _exec_ranges(pe)
+    lo, hi = min(a for a, _ in r), max(b for _, b in r)
+    if not lo <= va < hi:
+        pat = va.to_bytes(4, "little")
+        out, j = [], raw.find(pat)
+        while j >= 0:
+            out.append(j); j = raw.find(pat, j + 1)
+        return out
+    if getattr(pe, "_dword_index", None) is None:
+        idx: dict[int, list[int]] = {}
+        for a in range(4):   # memoryview "I" is native order: little-endian on arm64, as in the PE
+            for i, v in enumerate(memoryview(raw[a:a + (len(raw) - a) // 4 * 4]).cast("I")):
+                if lo <= v < hi:
+                    idx.setdefault(v, []).append(a + 4 * i)
+        for l in idx.values():
+            l.sort()
+        pe._dword_index = idx
+    return pe._dword_index.get(va, [])
+
+
 def _dispatched_table(pe, va: int, span: int = 0x1000) -> list[int]:
     """Siblings of `va` in a table that an indirect `jmp [reg*4+table]` reads."""
     raw = pe._raw
-    pat = va.to_bytes(4, "little")
     out: set[int] = set()
-    pos = 0
-    while True:
-        j = raw.find(pat, pos)
-        if j < 0:
-            break
-        pos = j + 1
+    for j in _dword_hits(pe, va):
         near = lambda k: abs(int.from_bytes(raw[k:k + 4], "little") - va) < span
         st = j
         while st >= 4 and near(st - 4):
@@ -323,14 +342,8 @@ def jump_table_siblings(pe, clo, va: int) -> list[int]:
         # Then bound the table by the dispatch itself: a run of dwords within
         # 4 KiB of `va`, whose start is the operand of a `jmp [reg*4+table]`.
         return _dispatched_table(pe, va)
-    pat = va.to_bytes(4, "little")
     out: set[int] = set()
-    pos = 0
-    while True:
-        j = raw.find(pat, pos)
-        if j < 0:
-            break
-        pos = j + 1
+    for j in _dword_hits(pe, va):
         # walk the contiguous run of dwords that all point into THIS function
         st = j
         while st >= 4:
@@ -463,11 +476,12 @@ def extra_functions_from_roots(pe, ghidra_dir: str,
             iat_vals = set()
 
         kept, bogus, unproven = [], [], []
+        vus, recoltes = set(), set(harvested)   # `in` on the 52 k-entry lists was ~6 min of the lift's start (sps)
         for va in harvested:
             if va in iat_vals:
                 bogus.append(va)
                 continue
-            kept.append(va)
+            kept.append(va); vus.add(va)
             if clo.instruction_boundary(va) is not True:
                 unproven.append(va)
             # Always pull in the rest of this address's jump table rather than
@@ -479,9 +493,9 @@ def extra_functions_from_roots(pe, ghidra_dir: str,
             # Hors du code, pas de table : l'ancienne liste de racines finissait par 6 VA étendues en signe
             # (0xffffffff73456401…) que to_bytes(4) refusait — lift neuf mort à 12 min (P938).
             sibs = [x for x in jump_table_siblings(pe, clo, va)
-                    if x not in harvested and x not in kept] if clo._in_code(va) else []
+                    if x not in recoltes and x not in vus] if clo._in_code(va) else []
             if sibs:
-                kept.extend(sibs)
+                kept.extend(sibs); vus.update(sibs)
                 print(f"  + {len(sibs)} sibling landing site(s) from "
                       f"0x{va:x}'s jump table: "
                       f"{', '.join(hex(x) for x in sibs[:8])}")
@@ -495,7 +509,7 @@ def extra_functions_from_roots(pe, ghidra_dir: str,
                       f"{', '.join(hex(x) for x in tabs[:8])}")
         roots += kept
         if harvested:
-            _direct = len([v for v in kept if v in harvested])
+            _direct = len([v for v in kept if v in recoltes])
             _sib = len(kept) - _direct
             print(f"Harvested roots: {_direct}/{len(harvested)} usable"
                   + (f" (+{_sib} from jump/call tables)" if _sib else "")
