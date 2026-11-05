@@ -69,7 +69,9 @@ if ! cmp -s "$R/version" "$W/.version"; then
   echo "working copy -> $W"
   mkdir -p "$W" && ditto --clone "$R/bo2" "$W" && cp "$R/version" "$W/.version" || alerte "$T3 $W"
 fi
-if [ -f "$R/from-source" ] && [ ! -x "$W/boot_cache/mps/boot" ]; then   # first launch: translate the player's t6sp.exe
+mkdir -p "$W/boot_cache" && echo "${R%/Contents/Resources}" > "$W/boot_cache/app_path"   # reopened by play_steam.sh
+C=$(cat "$W/boot_cache/conversion_target" 2>/dev/null); case "$C" in sps|zms) ;; *) C=mps ;; esac   # the modes asked for (issue #3)
+if [ -f "$R/from-source" ] && [ ! -x "$W/boot_cache/$C/boot" ]; then   # first launch: translate the player's t6sp.exe
   [ -s "$W/icon.png" ] || { python3 "$W/tools/exe_icon.py" "$(cat "$G")/t6sp.exe" "$W/icon.ico" \
     && sips -s format png "$W/icon.ico" --out "$W/icon.png" >/dev/null && bash "$W/scripts/icon_margin.sh" "$W/icon.png"; } || true
   while :; do
@@ -84,11 +86,12 @@ if [ -f "$R/from-source" ] && [ ! -x "$W/boot_cache/mps/boot" ]; then   # first 
     [ $rc = 3 ] || break                                          # 3 = "Try Again" (build_steam.sh resumes)
   done
   if [ $rc = 4 ]; then                                            # 4 = play the campaign now: stop the whole conversion tree
+    echo sps > "$W/boot_cache/conversion_target"                  # and keep the other modes for when they are picked
     tue() { kill -STOP "$1" 2>/dev/null; for c in $(pgrep -P "$1"); do tue "$c"; done; kill -KILL "$1" 2>/dev/null; }
     trap '' HUP; tue "$P"; trap - HUP   # launchd's child = orphaned group: a death beside stopped members HUPs it all, us too
     cd "$W" && exec env BO2_PANNEAU=0 MTL_HUD_ENABLED=0 BO2_TITRE=0 scripts/launch.sh campagne
   fi
-  [ $rc = 0 ] && [ -x "$W/boot_cache/mps/boot" ] || exit 0           # window closed: the preparation goes on without it
+  [ $rc = 0 ] && [ -x "$W/boot_cache/$C/boot" ] || exit 0           # window closed: the preparation goes on without it
 fi
 cd "$W" && exec env BO2_PANNEAU=0 MTL_HUD_ENABLED=0 BO2_TITRE=0 scripts/launch.sh campagne
 EOF

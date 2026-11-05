@@ -12,6 +12,10 @@ guard args.count == 3, let p = pid_t(args[2]) else { exit(2) }
 let pid = p
 let journal = args[1]
 let dossier = (journal as NSString).deletingLastPathComponent
+// The last mode the conversion goes to (scripts/build_steam.sh, issue #3)
+let demande = (try? String(contentsOfFile: dossier + "/boot_cache/conversion_target", encoding: .utf8))?
+    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+let cible: String = demande == "sps" || demande == "zms" ? demande : "mps"
 
 struct Etape { let cle: String; let debut, fin, minutes: Double }
 // Bounds = the percentages build_steam.sh prints; minutes = an M1 with 4 performance cores
@@ -39,7 +43,7 @@ let textes: [String: [String: String]] = [
     "fini": ["fr": "La traduction est faite", "en": "Translation complete", "de": "Übersetzung abgeschlossen", "es": "Traducción completada", "it": "Traduzione completata", "pt": "Tradução concluída", "pl": "Tłumaczenie zakończone", "ru": "Перевод завершён", "ja": "変換が完了しました"],
     "fini_texte": ["fr": "Les prochaines fois, Black Ops II s'ouvrira directement.", "en": "From now on, Black Ops II opens straight away.", "de": "Ab jetzt startet Black Ops II sofort.", "es": "A partir de ahora, Black Ops II se abrirá directamente.", "it": "D'ora in poi Black Ops II si aprirà subito.", "pt": "A partir de agora, o Black Ops II abre direto.", "pl": "Od teraz Black Ops II uruchamia się od razu.", "ru": "Теперь Black Ops II будет запускаться сразу.", "ja": "次回からBlack Ops IIはすぐに起動します。"],
     "jouer_campagne": ["fr": "Jouer à la campagne", "en": "Play the campaign", "de": "Kampagne spielen", "es": "Jugar la campaña", "it": "Gioca la campagna", "pt": "Jogar a campanha", "pl": "Zagraj w kampanię", "ru": "Играть в кампанию", "ja": "キャンペーンをプレイ"],
-    "jouer_campagne_texte": ["fr": "La campagne est prête. La conversion s'arrête pendant la partie et reprend à la prochaine ouverture de Black Ops II.", "en": "The campaign is ready. The conversion stops while you play and resumes the next time you open Black Ops II.", "de": "Die Kampagne ist bereit. Die Umwandlung hält während des Spiels an und läuft beim nächsten Öffnen von Black Ops II weiter.", "es": "La campaña está lista. La conversión se detiene mientras juegas y continúa la próxima vez que abras Black Ops II.", "it": "La campagna è pronta. La conversione si ferma mentre giochi e riprende alla prossima apertura di Black Ops II.", "pt": "A campanha está pronta. A conversão para enquanto você joga e continua na próxima vez que abrir o Black Ops II.", "pl": "Kampania jest gotowa. Konwersja zatrzymuje się na czas gry i wznowi się przy następnym otwarciu Black Ops II.", "ru": "Кампания готова. Преобразование останавливается на время игры и продолжится при следующем запуске Black Ops II.", "ja": "キャンペーンの準備ができました。プレイ中は変換が止まり、次にBlack Ops IIを開いたときに再開します。"],
+    "jouer_campagne_texte": ["fr": "La campagne est prête. Jouez-y maintenant : les autres modes seront convertis quand vous les choisirez dans le menu du jeu.", "en": "The campaign is ready. Play it now: the other modes get converted when you pick them in the game's menu.", "de": "Die Kampagne ist bereit. Spielen Sie sie jetzt: Die anderen Modi werden umgewandelt, wenn Sie sie im Spielmenü auswählen.", "es": "La campaña está lista. Juégala ya: los demás modos se convertirán cuando los elijas en el menú del juego.", "it": "La campagna è pronta. Giocala subito: le altre modalità verranno convertite quando le sceglierai nel menu del gioco.", "pt": "A campanha está pronta. Jogue agora: os outros modos serão convertidos quando você escolhê-los no menu do jogo.", "pl": "Kampania jest gotowa. Można w nią zagrać od razu: pozostałe tryby zostaną przekonwertowane po wybraniu ich w menu gry.", "ru": "Кампания готова. Играйте сейчас: остальные режимы будут преобразованы, когда вы выберете их в меню игры.", "ja": "キャンペーンの準備ができました。今すぐプレイできます。ほかのモードは、ゲームのメニューで選んだときに変換されます。"],
     "jouer": ["fr": "Jouer", "en": "Play", "de": "Spielen", "es": "Jugar", "it": "Gioca", "pt": "Jogar", "pl": "Graj", "ru": "Играть", "ja": "プレイ"],
     "echec": ["fr": "La préparation s'est arrêtée", "en": "Preparation stopped", "de": "Die Vorbereitung wurde angehalten", "es": "La preparación se detuvo", "it": "La preparazione si è interrotta", "pt": "A preparação parou", "pl": "Przygotowanie zostało przerwane", "ru": "Подготовка остановилась", "ja": "準備が停止しました"],
     "echec_garde": ["fr": "Ce qui est déjà fait est gardé : « Réessayer » reprend où elle s'est arrêtée.", "en": "Nothing done so far is lost: “Try Again” picks up where it stopped.", "de": "Bisherige Arbeit bleibt erhalten: „Erneut versuchen“ macht dort weiter, wo es aufgehört hat.", "es": "No se pierde nada de lo hecho: «Reintentar» continúa donde se detuvo.", "it": "Il lavoro già fatto non va perso: «Riprova» riprende da dove si era fermata.", "pt": "Nada do que já foi feito se perde: “Tentar novamente” continua de onde parou.", "pl": "Nic z dotychczasowej pracy nie przepada: „Spróbuj ponownie” wznawia od miejsca przerwania.", "ru": "Уже сделанное сохраняется: «Повторить» продолжит с места остановки.", "ja": "ここまでの処理は保持されます。「再試行」で中断したところから再開します。"],
@@ -110,7 +114,7 @@ final class Modele: ObservableObject {
         estimer()
         NSApp.dockTile.badgeLabel = fini || echec != nil ? nil : "\(Int(pct)) %"
         if kill(pid, 0) != 0 && echec == nil && !fini {
-            if FileManager.default.isExecutableFile(atPath: dossier + "/boot_cache/mps/boot") {
+            if FileManager.default.isExecutableFile(atPath: dossier + "/boot_cache/\(cible)/boot") {
                 fini = true
                 NSSound(named: "Glass")?.play()
                 NSApp.requestUserAttention(.criticalRequest)

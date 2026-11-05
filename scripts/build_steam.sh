@@ -32,6 +32,9 @@ say "10 %  Remill ready"
 # CMAKE_POLICY_VERSION_MINIMUM: HLSLcc asks for CMake 2.8, which CMake 4 refuses (issue #2)
 [ -s runtime/win32/snd_reverb_gen.inc ] || BO2_REVERB_STEAM=1 bash scripts/gen_snd_reverb.sh
 
+# The conversion stops after this mode (sps, zms or mps): "Play the campaign" writes sps, picking an unconverted mode in
+# the game's menu raises it (scripts/play_steam.sh). No file: all three (issue #3).
+FIN=$(cat $BC/conversion_target 2>/dev/null) || true; case "$FIN" in sps|zms) ;; *) FIN=mps ;; esac
 P=10
 for spec in "sps 9211 t6sp" "zms 12533 t6zm" "mps 12664 t6mp"; do
   set -- $spec; t=$1; N=$2; W=$BC/$t; mkdir -p $W
@@ -55,5 +58,6 @@ for spec in "sps 9211 t6sp" "zms 12533 t6zm" "mps 12664 t6mp"; do
     touch $W/.fini
   fi
   P=$((P + 30))
+  if [ $t = $FIN ]; then break; fi
 done
 say "100 %  done"

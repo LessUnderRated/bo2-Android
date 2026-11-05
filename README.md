@@ -274,7 +274,8 @@ scripts/make_app.sh --from-source
 ```
 
 Open `Black Ops II.app`, point it at your game folder and let it convert: about 2.5 hours on an M1. The campaign is
-playable as soon as it is converted, and the rest resumes the next time you open the app. If the disk falls under
+playable as soon as it is converted: play it then, and Zombies and multiplayer are converted when you first pick them
+in the game's menu. Otherwise the conversion goes on through all three. If the disk falls under
 8 GB free, the conversion stops cleanly and resumes where it was.
 
 The converter only accepts the exact Steam build, checked by SHA-256. The Steam executables are encrypted by Valve's
@@ -315,16 +316,14 @@ plays when you own it and its files are in your game folder.
    any translated function can be sent back to the interpreter, to find a wrong one by halving.
 4. **No shader wait**: shaders built before the first match, instead of at launch (about 3 minutes in multiplayer) and
    during play (freezes when a new effect appears).
-5. **Choose your modes**: convert only the campaign, Zombies or multiplayer, and add the others later
-   ([#3](https://github.com/adrbn/bo2-mac/issues/3)).
-6. **Shorter conversion** (about 2.5 hours on an M1 today): the code the three modes share converted once instead of
+5. **Shorter conversion** (about 2.5 hours on an M1 today): the code the three modes share converted once instead of
    three times, an update converting only what changed, and less optimisation for code that rarely runs.
-7. **Faster, without heat**: the campaign is bound by the scheduler thread, not by rendering; multiplayer with 11 bots
+6. **Faster, without heat**: the campaign is bound by the scheduler thread, not by rendering; multiplayer with 11 bots
    is bound by the server thread. Native rewrites of the hottest functions come next, then frame rates above 60 for
    120 Hz screens.
-8. **Controllers**: vibration and aim assist.
-9. **Together**: real UDP sockets for Zombies co-op, Grief and Turned, and multiplayer over LAN.
-10. **Later**: MetalFX, post-processing when the frame is presented, and replacement textures loaded from the player's own copy.
+7. **Controllers**: vibration and aim assist.
+8. **Together**: real UDP sockets for Zombies co-op, Grief and Turned, and multiplayer over LAN.
+9. **Later**: MetalFX, post-processing when the frame is presented, and replacement textures loaded from the player's own copy.
 
 <img src="docs/assets/rule-11.svg" alt="" width="100%">
 
