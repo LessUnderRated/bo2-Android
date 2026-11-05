@@ -278,6 +278,10 @@ playable as soon as it is converted: play it then, and Zombies and multiplayer a
 in the game's menu. Otherwise the conversion goes on through all three. If the disk falls under
 8 GB free, the conversion stops cleanly and resumes where it was.
 
+**Updating, or if the conversion stops.** Run `git pull && scripts/make_app.sh --from-source` in the repository
+folder: what is already converted is kept and the conversion resumes. If it still fails, open an issue with the log
+it names.
+
 The converter only accepts the exact Steam build, checked by SHA-256. The Steam executables are encrypted by Valve's
 SteamStub wrapper and **this repository provides no way to remove it**: the converter expects the three decrypted
 images in `~/.bo2-native/steam/` (`t6sp.exe.unpacked.exe`, `t6mp.exe.unpacked.exe`, `t6zm.exe.unpacked.exe`). You make
@@ -308,6 +312,8 @@ plays when you own it and its files are in your game folder.
 
 1. **This beta**: the three modes from a fresh Steam copy, on other Macs than the one that built them. Your reports
    (Mac model, frame rate, what broke) decide what comes next.
+   First outside report, 2026-11-05: on another Mac, the conversion completed and the game started, after three
+   fixes found on the way ([#4](https://github.com/adrbn/bo2-mac/issues/4), [#5](https://github.com/adrbn/bo2-mac/issues/5), [#6](https://github.com/adrbn/bo2-mac/issues/6)).
 2. **No Terminal**: one app to download and open, then drop the game folder on its window. It carries its tools
    already built, so nothing is compiled on your Mac but the game itself (macOS 26 or later; macOS 14 and 15 keep the
    Terminal install).
