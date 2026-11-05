@@ -304,15 +304,31 @@ static const SteamReel& steam_reel() {
         void* h = dlopen(lib.c_str(), RTLD_NOW);
         if (!h) steam_reel_refus(steam_texte(kSteamAbsent));
         auto init = (int (*)(char*))dlsym(h, "SteamAPI_InitFlat");
-        auto user = (void* (*)())dlsym(h, "SteamAPI_SteamUser_v023");
-        auto apps = (void* (*)())dlsym(h, "SteamAPI_SteamApps_v009");
+        // A Steam update (the beta first) can move an interface to a newer version and drop the old accessor (issue #6).
+        // The flat ISteam* functions of a libsteam_api follow its newest interface, so take the newest accessor it has.
+        auto acces = [h](const char* base, int de) -> void* (*)() {
+            for (int v = de + 20; v >= de; v--) {
+                char n[64];
+                snprintf(n, sizeof n, "%s%03d", base, v);
+                if (void* f = dlsym(h, n)) return (void* (*)())f;
+            }
+            return nullptr;
+        };
+        auto user = acces("SteamAPI_SteamUser_v", 23);
+        auto apps = acces("SteamAPI_SteamApps_v", 9);
         auto sid = (uint64_t (*)(void*))dlsym(h, "SteamAPI_ISteamUser_GetSteamID");
         r.sub = (bool (*)(void*, uint32_t))dlsym(h, "SteamAPI_ISteamApps_BIsSubscribedApp");
         r.dlc = (bool (*)(void*, uint32_t))dlsym(h, "SteamAPI_ISteamApps_BIsDlcInstalled");
         r.logged = (bool (*)(void*))dlsym(h, "SteamAPI_ISteamUser_BLoggedOn");
-        auto stats = (void* (*)())dlsym(h, "SteamAPI_SteamUserStats_v013");
+        auto stats = acces("SteamAPI_SteamUserStats_v", 13);
         r.store = (bool (*)(void*))dlsym(h, "SteamAPI_ISteamUserStats_StoreStats");
-        if (!init || !user || !apps || !sid || !r.sub || !r.dlc || !r.logged || !stats || !r.store) steam_reel_refus(steam_texte(kSteamAncien));
+        if (!init || !user || !apps || !sid || !r.sub || !r.dlc || !r.logged || !stats || !r.store) {
+            fprintf(stderr, "[STEAM-REEL] missing in %s:%s%s%s%s%s%s%s%s%s\n", lib.c_str(), init ? "" : " InitFlat",
+                    user ? "" : " SteamUser_v023+", apps ? "" : " SteamApps_v009+", sid ? "" : " GetSteamID",
+                    r.sub ? "" : " BIsSubscribedApp", r.dlc ? "" : " BIsDlcInstalled", r.logged ? "" : " BLoggedOn",
+                    stats ? "" : " SteamUserStats_v013+", r.store ? "" : " StoreStats");
+            steam_reel_refus(steam_texte(kSteamAncien));
+        }
         setenv("SteamAppId", std::to_string(kSteamAppId).c_str(), 1);
         char err[1024] = {0};
         if (init(err) != 0)
