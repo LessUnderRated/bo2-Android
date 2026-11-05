@@ -2413,11 +2413,13 @@ extern "C" __attribute__((used)) void* bo2_longjmp(State* s, uint32_t /*pc*/, vo
                     t[k] = 0;
                     if (k >= 12) fprintf(stderr, "[LONGJMP-PILE] tid=%d [esp+%#x]=%08x \"%s\"\n", (int)g_cur, a - esp, p, t);
                 }
+#if !defined(BO2_TARGET_SPS)   // match_rules.cpp, which defines it, is not linked into the campaign (issue #5)
                 {   // Erreur de VM : la position du script (variable du cadre de VM_Execute) se lit sur la pile.
                     int vus = 0;
                     for (uint32_t k = 1; k <= 3 && vus < 3; k++) vus += bo2_regles_situe(win32_mem_read32(env + 4 * k));
                     for (uint32_t a = esp; a < j_esp + 0x200u && vus < 3; a += 4) vus += bo2_regles_situe(win32_mem_read32(a));
                 }
+#endif
             }
         }
         if (j_esp == 0 && j_eip == 0 && bo2_getenv("BO2_LJ_GUARD")) {
