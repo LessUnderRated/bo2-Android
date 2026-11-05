@@ -312,7 +312,7 @@ plays when you own it and its files are in your game folder.
 
 1. **This beta**: the three modes from a fresh Steam copy, on other Macs than the one that built them. Your reports
    (Mac model, frame rate, what broke) decide what comes next.
-   First outside report, 2026-11-05: on another Mac, the conversion completed and the game started, after three
+   First outside report, 2026-11-05: on an M2 Pro (16 GB), the conversion completed and the game started, after three
    fixes found on the way ([#4](https://github.com/adrbn/bo2-mac/issues/4), [#5](https://github.com/adrbn/bo2-mac/issues/5), [#6](https://github.com/adrbn/bo2-mac/issues/6)).
 2. **No Terminal**: one app to download and open, then drop the game folder on its window. It carries its tools
    already built, so nothing is compiled on your Mac but the game itself (macOS 26 or later; macOS 14 and 15 keep the
