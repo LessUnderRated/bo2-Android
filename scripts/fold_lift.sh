@@ -52,7 +52,10 @@ if [ -n "$ONLY" ]; then
 fi
 N=$(ls $W/cached_part_*.bc 2>/dev/null | wc -l); [ $N -gt 0 ] || N=$(ls $W/batch_*.bc | wc -l)
 say "$N tranches, $PAR en parallele"
-seq 0 $((N - 1)) | xargs -P "$PAR" -I{} bash -c 'tranche {}'
+# Biggest slices first (same input as tranche()): in index order the largest ones came last and ran alone at the end
+# (sps: 4 slices of 10-15 MB, the last minute; mps batch_124 is 2 min on its own).
+for n in $(seq 0 $((N - 1))); do f=$W/cached_part_$n.bc; [ -f $f ] || f=$W/batch_$n.bc; echo "$(stat -f %z $f) $n"; done \
+  | sort -rn | cut -d' ' -f2 | xargs -P "$PAR" -I{} bash -c 'tranche {}'
 ls $OUT/*.ECHEC >/dev/null 2>&1 && die "tranches en echec : $(grep -H . $OUT/*.ECHEC | tr '\n' ' ')"
 grep -h "fold\|\[ecrit\]\|\[large\]\|\[widen\]" $OUT/part_0.filtres
 $L/clang -arch arm64 -c -O0 -x ir -o $OUT/stubs.o $W/stubs.bc || die "stubs"

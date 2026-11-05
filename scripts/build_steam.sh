@@ -5,10 +5,13 @@
 set -eu
 cd "$(dirname "$0")/.."
 ROOT=$PWD; BC=boot_cache; S=~/.bo2-native/steam
-# Every core, efficiency ones included, and one job per 2 GB. Measured on an M1 (8 cores, 16 GB), 4 -> 8 jobs: lift
-# -38 %, fold -37 %, at least 40 % of memory still free. A fold slice peaks at 260 MB, the biggest one (mps) at 1.1 GB.
-C=$(sysctl -n hw.ncpu); M=$(( $(sysctl -n hw.memsize) >> 31 ))
+# Lift: every core, efficiency ones included, and one job per 2 GB. Fold: one slice per 2.5 GB, as the biggest slices
+# sit side by side (mps 122-133: 0.75 to 1.6 GB each; the top 6 together left 41 % of 16 GB free). Measured on an M1
+# (8 cores, 16 GB), app toolchain: lift 4 -> 8 jobs -20 % (first 5000 sps functions); fold, 30 ordinary slices,
+# 3 -> 6 in parallel -25 %, 8 -28 %. Real sps run of 11/05 (8 and 8): lift 951 -> 943 s, fold 26.5 -> 22.3 min.
+C=$(sysctl -n hw.ncpu); M=$(( $(sysctl -n hw.memsize) >> 31 )); M5=$(( ($(sysctl -n hw.memsize) * 2 / 5) >> 30 ))
 J=${J:-$(( C < M ? C : M ))}; [ "$J" -ge 1 ] || J=1; export J
+F=${F:-$(( C < M5 ? C : M5 ))}; [ "$F" -ge 1 ] || F=1
 say(){ echo "[prepare] $*"; }
 die(){ say "❌ $*"; exit 1; }
 libre(){ df -k "$ROOT" | awk 'NR==2{print int($4/1048576)}'; }
@@ -50,7 +53,7 @@ for spec in "sps 9211 t6sp" "zms 12533 t6zm" "mps 12664 t6mp"; do
       veille $W/lift.log env $B python3 -u tools/boot.py -n $N -j $J --build-only || { [ $? = 124 ] \
         && die "$3 lift made no progress for 45 min (see $W/lift.log)"; die "$3 lift failed (see $W/lift.log)"; }
       garde; say "$((P + 15)) %  $3: fold"
-      BOOT_WORKDIR=$W scripts/fold_lift.sh $J > $W/fold.log 2>&1 || die "$3 fold failed (see $W/fold.log)"
+      BOOT_WORKDIR=$W scripts/fold_lift.sh $F > $W/fold.log 2>&1 || die "$3 fold failed (see $W/fold.log)"
       mv ${W}_fold/lifted.o $W/lifted.o; rm -rf ${W}_fold; touch $W/.plie
       find $W -maxdepth 1 \( -name 'func_*.bc' -o -name 'func_*.bc.fixed' -o -name 'batch_*.bc' \) -delete   # the link only needs lifted.o and bc_files.txt
     fi
