@@ -335,7 +335,9 @@ plays when you own it and its files are in your game folder.
    is bound by the server thread. Native rewrites of the hottest functions come next, then frame rates above 60 for
    120 Hz screens.
 7. **Controllers**: vibration and aim assist.
-8. **Together**: real UDP sockets for Zombies co-op, Grief and Turned, and multiplayer over LAN.
+8. **Together**: real UDP sockets for Zombies co-op, Grief and Turned, and multiplayer over LAN. Then local split
+   screen, which the PC version never had: two copies of the game drawn in one window, one controller each, joined over
+   that LAN.
 9. **Later**: MetalFX, post-processing when the frame is presented, and replacement textures loaded from the player's own copy.
 
 <img src="docs/assets/rule-11.svg" alt="" width="100%">
