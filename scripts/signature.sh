@@ -20,7 +20,7 @@ sig() {
 }
 case "${1:-}" in
   lift|link) sig "$1" "$2" ;;
-  check)
+  check)  # tools/signature_test.sh
     FIN=$(cat boot_cache/conversion_target 2>/dev/null) || true; case "$FIN" in sps|zms) ;; *) FIN=mps ;; esac
     for t in sps zms mps; do
       [ ! -f boot_cache/$t/.sig_lift ] || [ -f boot_cache/$t/.fini ] || exit 1
