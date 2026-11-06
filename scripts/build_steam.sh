@@ -44,12 +44,24 @@ FIN=$(cat $BC/conversion_target 2>/dev/null) || true; case "$FIN" in sps|zms) ;;
 P=10
 for spec in "sps 9211 t6sp" "zms 12533 t6zm" "mps 12664 t6mp"; do
   set -- $spec; t=$1; N=$2; W=$BC/$t; mkdir -p $W
+  # Sources changed since the mode was converted (scripts/signature.sh): a lift source redoes lift, fold and link, a
+  # half-done lift included (what it left was made from the old sources); a link source only the link. A mode converted
+  # before the signatures keeps its conversion and takes the current ones.
+  SL=$(bash scripts/signature.sh lift $t); SK=$(bash scripts/signature.sh link $t); R=
+  [ -f $W/.sig_lift ] || [ ! -f $W/.plie ] || echo $SL > $W/.sig_lift
+  [ -f $W/.sig_link ] || [ ! -f $W/.fini ] || echo $SK > $W/.sig_link
+  if [ -f $W/.sig_lift ] && [ "$(cat $W/.sig_lift)" != $SL ]; then
+    say "$P %  $3: the lift changed, converting again"; R=1
+    rm -rf $W/.plie $W/.fini ${W}_fold
+    find $W -maxdepth 1 \( -name 'func_*.bc*' -o -name 'batch_*.bc' -o -name 'cached_part_*.bc' \) -delete
+  fi
+  [ "$(cat $W/.sig_link 2>/dev/null)" = $SK ] || rm -f $W/.fini
   if [ ! -f $W/.fini ]; then
-    [ -s bin/ghidra-out-$t/calltree.csv ] || BO2_TARGET=$t python3 tools/ghidra_csv.py remplir "$S/$3.exe.unpacked.exe"
+    { [ -s bin/ghidra-out-$t/calltree.csv ] && [ -z "$R" ]; } || BO2_TARGET=$t python3 tools/ghidra_csv.py remplir "$S/$3.exe.unpacked.exe"
     [ -f $W/runway_vide.txt ] || : > $W/runway_vide.txt
     B="LIFT_PISTE_ENTIERE=1 BO2_TARGET=$t BOOT_WORKDIR=$W LIFT_ROOTS_FILE=tools/lift_roots_$t.txt LIFT_RUNWAY_FILE=$W/runway_vide.txt"
     if [ ! -f $W/.plie ]; then
-      garde; say "$P %  $3: lift"
+      garde; say "$P %  $3: lift"; echo $SL > $W/.sig_lift
       veille $W/lift.log env $B python3 -u tools/boot.py -n $N -j $J --build-only || { [ $? = 124 ] \
         && die "$3 lift made no progress for 45 min (see $W/lift.log)"; die "$3 lift failed (see $W/lift.log)"; }
       garde; say "$((P + 15)) %  $3: fold"
@@ -61,7 +73,7 @@ for spec in "sps 9211 t6sp" "zms 12533 t6zm" "mps 12664 t6mp"; do
     zsh tools/steam/native_impl.sh $t > $W/natif.log 2>&1 || die "$3 native fallbacks failed (see $W/natif.log)"
     env $B BOOT_RELINK_ONLY=1 python3 -u tools/boot.py -n $N -j $J --build-only > $W/link.log 2>&1 || die "$3 link failed (see $W/link.log)"
     [ -x $W/boot ] || die "$3 link failed (see $W/link.log)"
-    touch $W/.fini
+    echo $SK > $W/.sig_link; touch $W/.fini
   fi
   P=$((P + 30))
   if [ $t = $FIN ]; then break; fi

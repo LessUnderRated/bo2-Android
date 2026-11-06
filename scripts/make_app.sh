@@ -65,13 +65,15 @@ if [ ! -s "$G" ]; then
   J="${J%/}"; [ -f "$J/t6sp.exe" ] || alerte "$T2 $J"
   mkdir -p "$HOME/.bo2-native" && printf '%s\n' "$J" > "$G"
 fi
-if ! cmp -s "$R/version" "$W/.version"; then
+E=$(cat "$W/preparation.pid" 2>/dev/null) || true   # a conversion running: its sources stay, the copy waits for the next launch
+if ! cmp -s "$R/version" "$W/.version" && { [ -z "$E" ] || ! kill -0 "$E" 2>/dev/null; }; then
   echo "working copy -> $W"
   mkdir -p "$W" && ditto --clone "$R/bo2" "$W" && cp "$R/version" "$W/.version" || alerte "$T3 $W"
 fi
 mkdir -p "$W/boot_cache" && echo "${R%/Contents/Resources}" > "$W/boot_cache/app_path"   # reopened by play_steam.sh
 C=$(cat "$W/boot_cache/conversion_target" 2>/dev/null); case "$C" in sps|zms) ;; *) C=mps ;; esac   # the modes asked for (issue #3)
-if [ -f "$R/from-source" ] && [ ! -x "$W/boot_cache/$C/boot" ]; then   # first launch: translate the player's t6sp.exe
+# First launch: translate the player's exes. After an update, again what its sources changed (scripts/signature.sh).
+if [ -f "$R/from-source" ] && { [ ! -x "$W/boot_cache/$C/boot" ] || ! bash "$W/scripts/signature.sh" check; }; then
   [ -s "$W/icon.png" ] || { python3 "$W/tools/exe_icon.py" "$(cat "$G")/t6sp.exe" "$W/icon.ico" \
     && sips -s format png "$W/icon.ico" --out "$W/icon.png" >/dev/null && bash "$W/scripts/icon_margin.sh" "$W/icon.png"; } || true
   while :; do
