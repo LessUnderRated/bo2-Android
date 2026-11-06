@@ -279,8 +279,9 @@ in the game's menu. Otherwise the conversion goes on through all three. If the d
 8 GB free, the conversion stops cleanly and resumes where it was.
 
 **Updating, or if the conversion stops.** Run `git pull && scripts/make_app.sh --from-source` in the repository
-folder: what is already converted is kept and the conversion resumes. If it still fails, open an issue with the log
-it names.
+folder: what is already converted is kept and the conversion resumes. An update redoes only what its changes touch: a
+fix to the runtime relinks the three modes in about 3 minutes on an M1 instead of converting again. If it still fails,
+open an issue with the log it names.
 
 The converter only accepts the exact Steam build, checked by SHA-256. The Steam executables are encrypted by Valve's
 SteamStub wrapper and **this repository provides no way to remove it**: the converter expects the three decrypted
@@ -327,8 +328,8 @@ plays when you own it and its files are in your game folder.
    launch and about 5 s on the next one; freezes over 300 ms went from 15–22 to 13–15, then 7. The first launch
    still freezes about as often.
 5. **Shorter conversion**: down from about 2.5 hours to 1 hour 45 on an M1 (2026-11-06, measured on all three modes:
-   the preparation reads the executable once, the lift and the fold use every core the memory allows). Next: an update
-   converting only what changed, and less optimisation for code that rarely runs. The three modes share only 4 % of
+   the preparation reads the executable once, the lift and the fold use every core the memory allows). An update now redoes
+   only what changed (a runtime fix: about 3 minutes). Next: less optimisation for code that rarely runs. The three modes share only 4 % of
    their functions, so converting shared code once would gain little.
 6. **Faster, without heat**: the campaign is bound by the scheduler thread, not by rendering; multiplayer with 11 bots
    is bound by the server thread. Native rewrites of the hottest functions come next, then frame rates above 60 for
