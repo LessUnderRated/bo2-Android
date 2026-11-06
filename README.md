@@ -73,7 +73,7 @@ byte for byte, and builds the app on your machine.
 | Zombies | **57–60 fps** (Die Rise 43–58) | TranZit, Mob of the Dead, Nuketown, Origins, Buried, Die Rise, solo, through the real menus |
 | Multiplayer against bots | **53–60 fps** | eleven game modes through the real menus: a full round, the scoreboard, back to the lobby |
 | Game world against real time | **≈ 1.0×** | the game's own server clock against wall time |
-| Conversion on the player's Mac | **about 2.5 hours** on an M1 | the campaign is playable as soon as it is converted; Zombies and multiplayer follow |
+| Conversion on the player's Mac | **about 1 hour 45** on an M1 (the campaign alone: about 45 minutes) | the campaign is playable as soon as it is converted; Zombies and multiplayer follow |
 | Disk | peak about **10 GB**, about **4 GB** kept | after the conversion, only the linked binaries stay |
 
 Frame rate counts the drawables really presented to the screen, checked against the screen and the Metal HUD.
@@ -273,7 +273,7 @@ pip3 install capstone
 scripts/make_app.sh --from-source
 ```
 
-Open `Black Ops II.app`, point it at your game folder and let it convert: about 2.5 hours on an M1. The campaign is
+Open `Black Ops II.app`, point it at your game folder and let it convert: about 1 hour 45 on an M1, the campaign first in about 45 minutes. The campaign is
 playable as soon as it is converted: play it then, and Zombies and multiplayer are converted when you first pick them
 in the game's menu. Otherwise the conversion goes on through all three. If the disk falls under
 8 GB free, the conversion stops cleanly and resumes where it was.
@@ -326,8 +326,10 @@ plays when you own it and its files are in your game folder.
    benchmark), shader compiling during the first two minutes of a match went from 18–25 s to 10–14 s on a first
    launch and about 5 s on the next one; freezes over 300 ms went from 15–22 to 13–15, then 7. The first launch
    still freezes about as often.
-5. **Shorter conversion** (about 2.5 hours on an M1 today): the code the three modes share converted once instead of
-   three times, an update converting only what changed, and less optimisation for code that rarely runs.
+5. **Shorter conversion**: down from about 2.5 hours to 1 hour 45 on an M1 (2026-11-06, measured on all three modes:
+   the preparation reads the executable once, the lift and the fold use every core the memory allows). Next: an update
+   converting only what changed, and less optimisation for code that rarely runs. The three modes share only 4 % of
+   their functions, so converting shared code once would gain little.
 6. **Faster, without heat**: the campaign is bound by the scheduler thread, not by rendering; multiplayer with 11 bots
    is bound by the server thread. Native rewrites of the hottest functions come next, then frame rates above 60 for
    120 Hz screens.
