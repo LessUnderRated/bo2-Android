@@ -15,5 +15,7 @@ s check                                  || ko "mode hors cible verifie"
 rm boot_cache/conversion_target; touch boot_cache/zms/.fini; echo y >> runtime/a.cpp
 ! s check                                || ko "runtime change non vu"
 rm boot_cache/*/.sig_*
-s check                                  || ko "conversion sans signature refaite"
+! s check                                || ko "conversion liee sans signature non reliee"
+for t in sps zms mps; do s link $t > boot_cache/$t/.sig_link; done
+s check                                  || ko "lift sans signature refait"
 echo OK

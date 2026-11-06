@@ -46,10 +46,9 @@ for spec in "sps 9211 t6sp" "zms 12533 t6zm" "mps 12664 t6mp"; do
   set -- $spec; t=$1; N=$2; W=$BC/$t; mkdir -p $W
   # Sources changed since the mode was converted (scripts/signature.sh): a lift source redoes lift, fold and link, a
   # half-done lift included (what it left was made from the old sources); a link source only the link. A mode converted
-  # before the signatures keeps its conversion and takes the current ones.
+  # before the signatures keeps its lift and is relinked once, so the update brings it the current runtime.
   SL=$(bash scripts/signature.sh lift $t); SK=$(bash scripts/signature.sh link $t); R=
   [ -f $W/.sig_lift ] || [ ! -f $W/.plie ] || echo $SL > $W/.sig_lift
-  [ -f $W/.sig_link ] || [ ! -f $W/.fini ] || echo $SK > $W/.sig_link
   if [ -f $W/.sig_lift ] && [ "$(cat $W/.sig_lift)" != $SL ]; then
     say "$P %  $3: the lift changed, converting again"; R=1
     rm -rf $W/.plie $W/.fini ${W}_fold
