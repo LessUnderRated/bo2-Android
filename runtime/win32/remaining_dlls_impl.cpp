@@ -872,6 +872,7 @@ extern "C" int bo2_dxbc_to_msl(const void* dxbc, uint32_t len, char** out_msl);
 extern "C" void bo2_msl_free(char* p);
 extern "C" void gfx_register_shader2(uint32_t obj, int is_pixel, const char* msl,
                                     const char* attrs);
+extern "C" bool gfx_shaders_open(void);
 
 extern "C" void gfx_register_texture(uint32_t obj, uint32_t w, uint32_t h, uint32_t fmt,
                                      const void* data, uint32_t bytes, uint32_t pitch);
@@ -3134,6 +3135,11 @@ static void impl_D3D11CreateDeviceAndSwapChain(State& s) {
 // pendant le chargement de la carte ; a la premiere liaison, chaque nouveau shader fige une image en pleine partie.
 static void translate_shader(uint32_t so, int slot) {
     if (!g_window_gfx || g_sh_done[so]) return;
+    if (!gfx_shaders_open()) {                    // fenetre pas encore ouverte : traduit a la premiere liaison
+        static uint32_t nrep = 0;
+        if (++nrep <= 3) fprintf(stderr, "[MSL-REPORT] %u shader(s) cree(s) avant la fenetre : traduits a la liaison\n", nrep);
+        return;
+    }
     auto it = g_sh_bc.find(so);
     if (it == g_sh_bc.end() || it->second.empty()) return;
     g_sh_done[so] = 1;

@@ -1399,6 +1399,9 @@ extern "C" void gfx_register_shader2(uint32_t obj, int is_pixel, const char* msl
     g_shader_pending.push_back({ obj, is_pixel != 0, std::string(msl),
                                  attrs ? std::string(attrs) : std::string() });
 }
+// Avant l'ouverture de la fenetre, gfx_register_shader2 et les tables de slots jettent tout : le shader se traduit
+// a sa premiere liaison (BO2_SHADER_CREE=1, Zombies : composite de tonalite cree avant, menu noir).
+extern "C" bool gfx_shaders_open(void) { return g_open.load(); }
 
 // Guest thread: register an uploaded texture under the guest's object id.
 extern "C" void gfx_register_texture(uint32_t obj, uint32_t w, uint32_t h, uint32_t fmt,
