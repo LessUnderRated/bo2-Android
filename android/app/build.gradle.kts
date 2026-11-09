@@ -62,10 +62,13 @@ android {
         // DXVK needs Vulkan 1.3, whose entry points are in the NDK's libvulkan.so from API 33.
         minSdk = 33
         targetSdk = 36
-        // The build number is the branch's commit count (scripts/build.sh passes it): each published build installs
-        // over the last as an upgrade, and the launcher shows which one is installed.
+        // The version code is the build time in minutes since 2020 (scripts/build.sh passes the time): it only grows,
+        // so each build installs over the last as an upgrade whatever happens to the history (a commit count fell
+        // from 85 to 34 when the history was cut for the public repository, and Android refuses a lower version over
+        // a higher one). The version name keeps the branch's commit count, which the launcher shows.
         val buildNumber = (findProperty("bo2.buildNumber") as String?)?.toIntOrNull() ?: 1
-        versionCode = buildNumber
+        val buildTime = (findProperty("bo2.buildTime") as String?)?.toLongOrNull() ?: (System.currentTimeMillis() / 1000)
+        versionCode = ((buildTime - 1_577_836_800L) / 60).toInt()
         versionName = "0.1.$buildNumber"
 
         ndk {
