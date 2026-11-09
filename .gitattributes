@@ -1,3 +1,6 @@
+# Every text file is stored with LF line endings, whatever the editor wrote: a file saved with CRLF on Windows is
+# normalized when it is added, so a one-line change never shows as a rewrite of the whole file.
+* text=auto eol=lf
 # Shell scripts must keep LF on every checkout: Git for Windows defaults to core.autocrlf=true, and a CRLF checkout
 # breaks bash ("set: pipefail: invalid option name").
 *.sh text eol=lf
