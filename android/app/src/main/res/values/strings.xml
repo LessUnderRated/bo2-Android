@@ -29,6 +29,10 @@
     <string name="launcher_touch">Touch controls</string>
     <string name="launcher_look">Look</string>
     <string name="launcher_auto_sprint">Auto-sprint</string>
+    <string name="launcher_aim">Aim assist</string>
+    <string name="launcher_aim_note">The game\'s own controller aim assist. On: your aim slows over a zombie and catches it when you aim down the sights. Strong: it also follows a moving zombie.</string>
+    <string name="aim_on">On</string>
+    <string name="aim_strong">Strong</string>
     <string name="launcher_diagnostics">Diagnostics</string>
     <string name="launcher_logging">Logging</string>
     <string-array name="launcher_logging_values">

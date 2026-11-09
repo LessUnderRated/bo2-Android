@@ -117,6 +117,41 @@ extern "C" void bo2_view_distance_tick(int64_t now_ms) {
     sent = want;
 }
 
+// Aim assist (graphics.hpp, aim_assist), kept while the game runs. Every 2 s the game core reports the four switches
+// (bo2_aim_state); each change is logged ([AIM]), so a match shows what the game and its scripts do with them. With the
+// setting on, a state other than the one it asks for (the switches registered after the settings went out, or the
+// scripts' disable switch set) gets the switches unlocked and set again. The game's own: only logged.
+extern "C" void bo2_aim_tick(int64_t now_ms) {
+    static int64_t next_ms = 0;
+    static int last = -2;    // the last state logged; -2 none yet
+    static int puts_back = 0;
+    if (now_ms < next_ms || !g_applied.load() || !bo2_cmd_queue) return;
+    next_ms = now_ms + 2000;
+    const auto read = bo2core::api().aim_state;
+    if (!read) return;   // a core built before bo2_aim_state
+    const int state = read();
+    const int setting = bo2gfx::settings().aim_assist;
+    const int want = bo2gfx::aim_wanted(setting);
+    if (state != last) {
+        auto on = [state](int bit) { return state >= 0 && (state & bit) ? "on" : "off"; };
+        if (state < 0)
+            std::fprintf(stderr, "[AIM] the aim assist switches are not readable yet\n");
+        else
+            std::fprintf(stderr, "[AIM] slowdown %s, catch on aiming %s, lock-on %s, scripts' disable %s (the setting: "
+                                 "%s; put back %d time%s so far)\n", on(1), on(2), on(4), on(8),
+                         setting <= 0 ? "the game's own" : setting >= 2 ? "strong" : "on", puts_back,
+                         puts_back == 1 ? "" : "s");
+        last = state;
+    }
+    if (want < 0 || state < 0 || state == want) return;
+    if (bo2_dvar_unlock_lod) bo2_dvar_unlock_lod();
+    bo2_cmd_queue("set aim_slowdown_enabled 1");
+    bo2_cmd_queue("set aim_autoaim_enabled 1");
+    bo2_cmd_queue((want & 4) ? "set aim_lockon_enabled 1" : "set aim_lockon_enabled 0");
+    bo2_cmd_queue("set aim_assist_script_disable 0");
+    ++puts_back;
+}
+
 // BO2_FX_AB=<seconds> (remote env, for one measurement session; docs/GRAPHICS.md, "Effects"): the effects cycle
 // through three states, each held that long, so one session compares them under the same play and heat:
 //   drawn  — as usual;

@@ -119,7 +119,28 @@ static void view_distance_never_goes_past_the_maps_own() {
     for (const auto& line : c.send) CHECK(line.find("r_zfar") == std::string::npos);
 }
 
+// Aim assist: nothing sent for the game's own; on and strong send the four switches (lock-on only for strong, the
+// scripts' disable switch cleared); presets keep it.
+static void aim_assist_sends_its_switches() {
+    auto base = parse_config(kConfig);
+    for (const char* n : {"aim_slowdown_enabled", "aim_autoaim_enabled", "aim_lockon_enabled",
+                          "aim_assist_script_disable"})
+        base[n] = kExistsNoValue;   // as dvars_in_image reports names found in the game binary
+    Settings s = preset(Preset::High);
+    CHECK(s.aim_assist == -1);
+    for (const auto& line : commands(s, base).send) CHECK(line.find("aim_") == std::string::npos);
+    s.aim_assist = 1;
+    const auto on = commands(s, base).send;
+    CHECK(has(on, "set aim_slowdown_enabled 1") && has(on, "set aim_autoaim_enabled 1"));
+    CHECK(has(on, "set aim_lockon_enabled 0") && has(on, "set aim_assist_script_disable 0"));
+    s.aim_assist = 2;
+    CHECK(has(commands(s, base).send, "set aim_lockon_enabled 1"));
+    CHECK(preset(Preset::Low, s).aim_assist == 2);   // a control, not a cost: presets keep it
+    CHECK(aim_wanted(-1) == -1 && aim_wanted(1) == 3 && aim_wanted(2) == 7);
+}
+
 int main() {
+    aim_assist_sends_its_switches();
     parses_seta_lines();
     view_distance_never_goes_past_the_maps_own();
     every_preset_upscales_with_sgsr();

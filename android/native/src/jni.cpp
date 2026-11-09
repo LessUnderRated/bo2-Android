@@ -116,9 +116,10 @@ NATIVE(jintArray, displayPlan)(JNIEnv* env, jclass, jint w, jint h) {
 }
 
 // Graphics knobs as an int array: [preset, frame_cap, shadows, ssao, dof, fxaa, msaa, textures, anisotropy,
-// decals, fov, upscaler, view_distance] (graphics.hpp; -1 = the game's own, except frame_cap and upscaler, the port's own).
+// decals, fov, upscaler, view_distance, aim_assist] (graphics.hpp; -1 = the game's own, except frame_cap and upscaler,
+// the port's own). aim_assist is a control, not graphics, but it reaches the game the same way.
 namespace {
-constexpr int kGfxKnobs = 13;
+constexpr int kGfxKnobs = 14;
 
 bo2gfx::Settings gfx_from(const jint* k) {
     bo2gfx::Settings s;
@@ -135,12 +136,14 @@ bo2gfx::Settings gfx_from(const jint* k) {
     s.fov = k[10];
     s.upscaler = k[11];
     s.view_distance = k[12];
+    s.aim_assist = k[13];
     return s;
 }
 
 jintArray gfx_to(JNIEnv* env, const bo2gfx::Settings& s) {
     const jint k[kGfxKnobs] = {static_cast<jint>(s.preset), s.frame_cap, s.shadows, s.ssao, s.dof, s.fxaa,
-                               s.msaa, s.textures, s.anisotropy, s.decals, s.fov, s.upscaler, s.view_distance};
+                               s.msaa, s.textures, s.anisotropy, s.decals, s.fov, s.upscaler, s.view_distance,
+                               s.aim_assist};
     jintArray out = env->NewIntArray(kGfxKnobs);
     env->SetIntArrayRegion(out, 0, kGfxKnobs, k);
     return out;

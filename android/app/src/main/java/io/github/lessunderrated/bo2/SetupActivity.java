@@ -242,6 +242,13 @@ public class SetupActivity extends Activity {
             () -> prefs.getInt(TouchOverlay.KEY_LOOK, 0), v -> prefs.edit().putInt(TouchOverlay.KEY_LOOK, v).apply());
         check(column, R.string.launcher_auto_sprint, prefs.getBoolean(TouchOverlay.KEY_AUTO_SPRINT, true),
             on -> prefs.edit().putBoolean(TouchOverlay.KEY_AUTO_SPRINT, on).apply());
+        if (knobs != null) {
+            // A control, but it reaches the game with the graphics settings (graphics.hpp, aim_assist); presets keep it.
+            option(column, getString(R.string.launcher_aim), Bo2Activity.AIMS,
+                v -> upper(Bo2Activity.aimName(this, v)), () -> knobs[Bo2Activity.K_AIM],
+                v -> { knobs[Bo2Activity.K_AIM] = v; saveKnobs(); });
+            note(column, R.string.launcher_aim_note);
+        }
 
         heading(column, R.string.launcher_diagnostics);
         String[] logging = getResources().getStringArray(R.array.launcher_logging_values);

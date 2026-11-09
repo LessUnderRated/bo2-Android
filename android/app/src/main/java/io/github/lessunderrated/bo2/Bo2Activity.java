@@ -97,7 +97,9 @@ public class Bo2Activity extends SDLActivity implements TouchOverlay.Listener {
     }
 
     static final String KEY_GRAPHICS = "graphics";
-    static final int K_PRESET = 0, K_CAP = 1, K_FOV = 10, K_UPSCALER = 11, K_VIEW = 12, N_KNOBS = 13;
+    static final int K_PRESET = 0, K_CAP = 1, K_FOV = 10, K_UPSCALER = 11, K_VIEW = 12, K_AIM = 13, N_KNOBS = 14;
+    /** Aim assist: -1 the game's own, 1 on, 2 strong (graphics.hpp, aim_assist). */
+    static final int[] AIMS = {-1, 1, 2};
     static final int[] CAPS = {30, 40, 45, 60, 90, 120, 0};
     static final int[] FOVS = {-1, 65, 70, 75, 80, 85, 90};
     static final int[] UPSCALERS = {1, 0};   // SGSR, bilinear (graphics.hpp)
@@ -109,23 +111,29 @@ public class Bo2Activity extends SDLActivity implements TouchOverlay.Listener {
         String saved = TouchOverlay.prefs(context).getString(KEY_GRAPHICS, null);
         if (saved != null) {
             String[] parts = saved.split(",");
-            // Fewer knobs: saved before the upscaler (11) or the view distance (12) existed. The upscaler starts as
-            // SGSR and the view distance as the saved preset's, as if the preset had been chosen again.
-            if (parts.length >= N_KNOBS - 2 && parts.length <= N_KNOBS) {
+            // Fewer knobs: saved before the upscaler (11), the view distance (12) or aim assist (13) existed. The
+            // upscaler starts as SGSR, the view distance as the saved preset's (as if the preset had been chosen
+            // again), aim assist as the game's own.
+            if (parts.length >= K_UPSCALER && parts.length <= N_KNOBS) {
                 int[] k = new int[N_KNOBS];
                 k[K_UPSCALER] = 1;
                 k[K_VIEW] = -1;
+                k[K_AIM] = -1;
                 for (int i = 0; i < parts.length; i++) {
                     k[i] = Integer.parseInt(parts[i].trim());
                 }
-                if (parts.length < N_KNOBS && k[K_PRESET] >= 0 && k[K_PRESET] <= 3) {
+                if (parts.length <= K_VIEW && k[K_PRESET] >= 0 && k[K_PRESET] <= 3) {
                     k[K_VIEW] = Native.graphicsPreset(k[K_PRESET], k)[K_VIEW];
                 }
                 return k;
             }
         }
-        int[] start = {2, 60, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, -1};
+        int[] start = {2, 60, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, -1, -1};
         return Native.graphicsPreset(2, start);
+    }
+
+    static String aimName(android.content.Context c, int aim) {
+        return c.getString(aim >= 2 ? R.string.aim_strong : aim == 1 ? R.string.aim_on : R.string.gfx_game);
     }
 
     /** "Map's own", or the distance in metres (a game unit is an inch). */

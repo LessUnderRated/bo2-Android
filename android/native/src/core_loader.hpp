@@ -18,6 +18,9 @@ struct Api {
     void (*hw_atomic_report)(const char* why) = nullptr; // the guest `lock` stripes' counters, to the log
     uint32_t (*draw_record_size)() = nullptr;            // the producer's sizeof(GfxDraw), for the renderer's check
     float (*depth_clear_value)() = nullptr;              // the value the engine clears depth with
+    // Optional (a core built before it lacks it, and still loads): the aim assist switches as bits, -1 unreadable
+    // (win32_runtime.cpp, bo2_aim_state).
+    int (*aim_state)() = nullptr;
 };
 
 const Api& api();

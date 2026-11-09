@@ -43,7 +43,17 @@ struct Settings {
     // or even walked by the game's visibility pass (r_zfar). -1: the map's own distance (most maps have one from their
     // fog). Never further than the map's own: see cull_distance().
     int view_distance = -1;
+    // Aim assist for a controller: the game's own system, which this Zombies build carries whole (aim_* dvars). Not a
+    // cost, so presets keep it. -1 the game's own (left alone), 1 on: the aim slows over a target and catches it when
+    // aiming down the sights, 2 strong: the aim also follows a moving target (lock-on). On and strong also clear
+    // aim_assist_script_disable, which turns the slowdown and lock-on off when set. Kept so while the game runs
+    // (bo2_aim_tick, graphics_apply.cpp).
+    int aim_assist = -1;
 };
+
+// The aim assist switches as bo2_aim_state reports them (win32_runtime.cpp): 1 slowdown, 2 catch on aiming down the
+// sights, 4 lock-on, 8 the scripts' disable switch. The state a setting asks for; -1 for the game's own (no demand).
+int aim_wanted(int aim_assist);
 
 // The r_zfar to ask of the game for a view distance (-1: the map's own) on a map whose own culling distance is
 // `map_distance` (0: none; <0: unknown). r_zfar replaces the map's distance rather than capping it, so 0 (off, the

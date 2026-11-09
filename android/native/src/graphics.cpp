@@ -28,6 +28,7 @@ Settings preset(Preset p, const Settings& current) {
     s.preset = p;
     s.frame_cap = current.frame_cap;
     s.fov = current.fov;  // a matter of taste, not of cost: kept across presets
+    s.aim_assist = current.aim_assist;   // a control, not a cost: kept too
     switch (p) {
         case Preset::Low:
             // Off: on the S26 the shadow passes cost the game's main core (a second culling of the world for the
@@ -69,6 +70,11 @@ Settings preset(Preset p, const Settings& current) {
             break;
     }
     return s;
+}
+
+int aim_wanted(int aim_assist) {
+    if (aim_assist <= 0) return -1;
+    return 1 | 2 | (aim_assist >= 2 ? 4 : 0);   // and never 8: the scripts' disable switch cleared
 }
 
 float cull_distance(int view_distance, float map_distance) {
@@ -182,6 +188,16 @@ Commands commands(const Settings& s, const std::map<std::string, std::string>& b
     // High and the game's own keep the default. (The view distance, r_zfar, is not sent here: it depends on the map's
     // own distance and follows it, bo2_view_distance_tick.)
     dvar("sm_strictCull", 1, low || medium ? "1" : "0");
+
+    // Aim assist (graphics.hpp, aim_assist). The three switches are cheat-protected like the LOD scales and unlocked
+    // with them; the scripts' disable switch is not protected. The game's own: nothing sent (none of the four is
+    // archived, so the game starts each run at its defaults: slowdown and catch on, lock-on off, scripts' switch off).
+    if (const int want = aim_wanted(s.aim_assist); want > 0) {
+        dvar("aim_slowdown_enabled", 1, "1");
+        dvar("aim_autoaim_enabled", 1, "1");
+        dvar("aim_lockon_enabled", 1, (want & 4) ? "1" : "0");
+        dvar("aim_assist_script_disable", 1, "0");
+    }
     return c;
 }
 
@@ -192,6 +208,7 @@ const std::vector<std::string>& known_dvars() {
         "cg_fov_default", "ai_corpseCount", "ragdoll_max_life", "dynEnt_spawnedLimit",
         "phys_piecesSpawnDistanceCutoff", "phys_impact_distance_cutoff", "sm_maxLights", "r_dlightLimit", "demo_enabled",
         "fxfrustumCutoff", "r_lodScaleRigid", "r_lodScaleSkinned", "sm_strictCull",
+        "aim_slowdown_enabled", "aim_autoaim_enabled", "aim_lockon_enabled", "aim_assist_script_disable",
     };
     return names;
 }

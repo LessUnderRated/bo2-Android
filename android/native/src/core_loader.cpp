@@ -45,6 +45,7 @@ bool load(const char* path, std::string* why) {
             all &= sym(h, "bo2_hw_atomic_report", a.hw_atomic_report, &missing);
             all &= sym(h, "bo2core_draw_record_size", a.draw_record_size, &missing);
             all &= sym(h, "bo2core_depth_clear_value", a.depth_clear_value, &missing);
+            a.aim_state = reinterpret_cast<int (*)()>(dlsym(h, "bo2_aim_state"));   // optional: older cores lack it
             if (all) {
                 g_api = a;
                 g_ok = true;

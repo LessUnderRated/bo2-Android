@@ -285,7 +285,7 @@ else
     {
         echo '{ global:'
         for s in bo2_game_main bo2_cmd_queue bo2_dvar_unlock_lod bo2_map_cull_distance bo2_hw_atomic_report \
-                 bo2core_draw_record_size bo2core_depth_clear_value; do echo "    $s;"; done
+                 bo2core_draw_record_size bo2core_depth_clear_value bo2_aim_state; do echo "    $s;"; done
         echo '  local: *; };'
     } > "$WORK/core.map"
     mkdir -p "$WORK/stub"

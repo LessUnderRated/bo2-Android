@@ -38,6 +38,7 @@ extern "C" void bo2_pad_top();   // runtime/input/pad_sdl.cpp: gpad_enabled 1 ag
 void bo2_adpf_frame();   // adpf.cpp: Android performance hints for the frame's threads
 extern "C" void bo2_view_distance_tick(int64_t now_ms);   // graphics_apply.cpp: r_zfar kept in step with the map
 extern "C" void bo2_fx_ab_tick(int64_t now_ms);   // graphics_apply.cpp: the BO2_FX_AB effects measurement
+extern "C" void bo2_aim_tick(int64_t now_ms);     // graphics_apply.cpp: the aim assist setting kept, and logged
 
 namespace {
 
@@ -153,6 +154,7 @@ void hook_frame_presented() {
     bo2_adpf_frame();   // adpf.cpp: the frame's work, for the CPU governor
     bo2_view_distance_tick((int64_t)SDL_GetTicks());   // every 2 s: the view distance against the map's own
     bo2_fx_ab_tick((int64_t)SDL_GetTicks());           // off unless BO2_FX_AB is set
+    bo2_aim_tick((int64_t)SDL_GetTicks());             // every 2 s: the aim assist switches against the setting
 }
 int hook_foreground() { return g_foreground.load() ? 1 : 0; }
 double hook_refresh_hz() {

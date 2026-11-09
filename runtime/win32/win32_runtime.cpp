@@ -16100,13 +16100,18 @@ static void audio_stereo_patch() {
 //  - sm_strictCull (0x34c519c) : la coupe stricte des projeteurs d'ombre (defaut 0).
 // Et deux des effets (enregistres dans 0x5bae50) : fx_freeze (0x20b1a5c, les effets ne sont plus mis a jour : la
 // mesure BO2_FX_AB de l'appli, graphics_apply.cpp) et fx_drawClouds (0x20b1a6c, les nuages de particules).
+// Et les trois interrupteurs de l'aide a la visee de la manette (enregistres par 0x48b5e0, drapeaux 0x1080) :
+// aim_slowdown_enabled (0xf85e7c, defaut 1), aim_autoaim_enabled (0xf863c4, defaut 1), aim_lockon_enabled (0xf863d4,
+// defaut 0) : le reglage « Aide a la visee » de l'appli (graphics.cpp, bo2_aim_tick).
 extern "C" int bo2_dvar_unlock_lod(void) {
     const char* e = bo2_getenv("BO2_DVAR_UNLOCK");
     if ((e && atoi(e) == 0) || !bo2_g_base) return 0;
     struct Wanted { const char* name; uint32_t slot; };
-    static const Wanted kWanted[] = {{"r_lodScaleRigid", 0x034c5414u}, {"r_lodScaleSkinned", 0x034c5378u},
-                                     {"r_zfar", 0x034c5084u},          {"sm_strictCull", 0x034c519cu},
-                                     {"fx_freeze", 0x020b1a5cu},       {"fx_drawClouds", 0x020b1a6cu}};
+    static const Wanted kWanted[] = {{"r_lodScaleRigid", 0x034c5414u},      {"r_lodScaleSkinned", 0x034c5378u},
+                                     {"r_zfar", 0x034c5084u},               {"sm_strictCull", 0x034c519cu},
+                                     {"fx_freeze", 0x020b1a5cu},            {"fx_drawClouds", 0x020b1a6cu},
+                                     {"aim_slowdown_enabled", 0x00f85e7cu}, {"aim_autoaim_enabled", 0x00f863c4u},
+                                     {"aim_lockon_enabled", 0x00f863d4u}};
     auto rd32 = [](uint32_t a) { uint32_t v; memcpy(&v, bo2_g_base + a, 4); return v; };
     int unlocked = 0, ready = 0;
     for (const Wanted& w : kWanted) {
@@ -16131,10 +16136,37 @@ extern "C" int bo2_dvar_unlock_lod(void) {
         }
     }
     if (unlocked)
-        fprintf(stderr, "[DVAR] r_lodScaleRigid, r_lodScaleSkinned, r_zfar, sm_strictCull, fx_freeze, fx_drawClouds "
-                        "settable by the app (cheat flag lifted on %d of %zu; BO2_DVAR_UNLOCK=0 keeps it)\n", unlocked,
-                sizeof kWanted / sizeof kWanted[0]);
+        fprintf(stderr, "[DVAR] the LOD scales, r_zfar, sm_strictCull, fx_freeze, fx_drawClouds and the aim assist "
+                        "switches settable by the app (cheat flag lifted on %d of %zu; BO2_DVAR_UNLOCK=0 keeps it)\n",
+                unlocked, sizeof kWanted / sizeof kWanted[0]);
     return ready;
+}
+
+// Android : l'etat de l'aide a la visee, pour le reglage de l'appli (graphics_apply.cpp, bo2_aim_tick) et son journal.
+// Bits : 1 aim_slowdown_enabled (le viseur ralentit sur une cible), 2 aim_autoaim_enabled (il s'accroche en visant),
+// 4 aim_lockon_enabled (il suit la cible), 8 aim_assist_script_disable (0xf8640c, defaut 0, sans drapeau triche :
+// vrai, il coupe le ralentissement et le suivi, 0x48d280 / 0x48e5a0 ; aucun code de l'exe ne l'ecrit, seuls des
+// scripts ou une config le peuvent). Chaque dvar_t* est lu dans l'emplacement que son enregistrement remplit, et
+// son nom verifie (dvar_t+0), son type booleen (dvar_t+0x10 == 1 ; valeur courante en dvar_t+0x18, comme le lit
+// 0x755e50). -1 : pas encore enregistres, ou pas la disposition de cet exe. Lecture par la carte plate, comme
+// bo2_dvar_unlock_lod (un fil hote).
+extern "C" int bo2_aim_state(void) {
+    if (!bo2_g_base) return -1;
+    struct Bit { const char* name; uint32_t slot; int bit; };
+    static const Bit kBits[] = {{"aim_slowdown_enabled", 0x00f85e7cu, 1}, {"aim_autoaim_enabled", 0x00f863c4u, 2},
+                                {"aim_lockon_enabled", 0x00f863d4u, 4},
+                                {"aim_assist_script_disable", 0x00f8640cu, 8}};
+    auto rd32 = [](uint32_t a) { uint32_t v; memcpy(&v, bo2_g_base + a, 4); return v; };
+    int state = 0;
+    for (const Bit& b : kBits) {
+        const uint32_t dv = rd32(b.slot);
+        if (dv < 0x10000u) return -1;
+        const uint32_t np = rd32(dv);
+        if (np < 0x10000u || memcmp(bo2_g_base + np, b.name, strlen(b.name) + 1) != 0 || rd32(dv + 0x10u) != 1u)
+            return -1;
+        if (__atomic_load_n(bo2_g_base + dv + 0x18u, __ATOMIC_RELAXED)) state |= b.bit;
+    }
+    return state;
 }
 
 // Android : la distance de coupe propre a la carte en cours, celle que le rendu prend quand r_zfar vaut 0 (0x333b778,
