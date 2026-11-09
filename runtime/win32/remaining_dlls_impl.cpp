@@ -337,17 +337,46 @@ static void say_once(const char* what, uint32_t appid, bool yes) {
         }
     }
 }
-// Zombies map packs: the app id the game asks about and the loader it then queues (pack order of the game's own
-// ContentPack log: DLCZM0, DLC1..DLC4).
+// Zombies map packs: the app id the game asks about, the loader it then queues (pack order of the game's own
+// ContentPack log: DLCZM0, DLC1..DLC4), and the two other zone/all files the pack cannot load without: its content
+// pack (dlczm<N>.ipak) and its map. Any shape of install is answered safely: all three present and not empty, the
+// pack is installed; none, it is not; some (a copy cut short, a pack half moved), it is not either, and the log says
+// which file is missing. The game hides every map of a pack it is told is missing (the playlist's hideifmissingdlc,
+// dw_local.cpp), so a partial pack is never mounted. Language files and sound banks are not required: their names
+// vary by language and by pack, and their absence costs text or sound, not the load.
 static int dlc_on_disk(uint32_t appid) {   // 1 present, 0 absent, -1 not a known map pack
-    static const struct { uint32_t appid; const char* loader; } kPacks[] = {
-        {219092, "dlczm0_load_zm.ff"}, {219096, "dlc1_load_zm.ff"}, {219099, "dlc2_load_zm.ff"},
-        {219102, "dlc3_load_zm.ff"}, {219104, "dlc4_load_zm.ff"},
+    static const struct { uint32_t appid; const char* pack; const char* files[3]; } kPacks[] = {
+        {219092, "Nuketown Zombies", {"dlczm0_load_zm.ff", "dlczm0.ipak", "zm_nuked.ff"}},
+        {219096, "Revolution (Die Rise)", {"dlc1_load_zm.ff", "dlczm1.ipak", "zm_highrise.ff"}},
+        {219099, "Uprising (Mob of the Dead)", {"dlc2_load_zm.ff", "dlczm2.ipak", "zm_prison.ff"}},
+        {219102, "Vengeance (Buried)", {"dlc3_load_zm.ff", "dlczm3.ipak", "zm_buried.ff"}},
+        {219104, "Apocalypse (Origins)", {"dlc4_load_zm.ff", "dlczm4.ipak", "zm_tomb.ff"}},
     };
     for (const auto& p : kPacks) {
         if (p.appid != appid) continue;
-        struct stat st {};
-        return ::stat((std::string(win32_game_dir()) + "/zone/all/" + p.loader).c_str(), &st) == 0 ? 1 : 0;
+        int present = 0;
+        const char* missing = nullptr;
+        for (const char* f : p.files) {
+            struct stat st {};
+            if (::stat((std::string(win32_game_dir()) + "/zone/all/" + f).c_str(), &st) == 0 && st.st_size > 0)
+                ++present;
+            else if (!missing)
+                missing = f;
+        }
+        static std::atomic<uint32_t> told[8];   // one line per pack and run
+        if (present > 0 && present < 3) {
+            for (auto& t : told) {
+                uint32_t cur = t.load();
+                if (cur == appid) break;
+                if (cur == 0 && t.compare_exchange_strong(cur, appid)) {
+                    fprintf(stderr, "[STEAM-STUB] DLC %s (%u) is only partly in the game folder (zone/all/%s missing "
+                                    "or empty): reported as not installed, its maps stay hidden\n",
+                            p.pack, appid, missing);
+                    break;
+                }
+            }
+        }
+        return present == 3 ? 1 : 0;
     }
     return -1;
 }
