@@ -1,0 +1,5 @@
+# Shell scripts must keep LF on every checkout: Git for Windows defaults to core.autocrlf=true, and a CRLF checkout
+# breaks bash ("set: pipefail: invalid option name").
+*.sh text eol=lf
+android/gradlew text eol=lf
+*.dxbc binary

@@ -1,0 +1,72 @@
+# Third-party notices
+
+This repository is licensed under the GNU General Public License v3.0 (`LICENSE`). It contains no game
+file, no extracted asset and no lifted or translated game code. What it takes from others:
+
+## adrbn/bo2-mac — GPL-3.0
+
+<https://github.com/adrbn/bo2-mac>, studied at commit `63b939f` (2026-11-07). The port's base: its
+lifter pipeline, Win32 runtime, Demonware responder and findings log are what this project retargets
+to Android.
+
+- `runtime/input/pad_sdl.cpp` is adapted from bo2-mac's `runtime/input/pad_gc.mm`: the same four entry
+  points (`bo2_pad_etat`, `bo2_pad_capacites`, `bo2_pad_vibrer`, `bo2_pad_top`), the XINPUT_STATE
+  layout, the mapping by position, and the `gpad_enabled` fix, with SDL3 in place of GameController.
+- `LICENSE` is bo2-mac's GPL-3.0 text.
+
+bo2-mac links Unicorn (GPL-2.0) statically when built. Its README notes that GPL-2.0 and GPL-3.0 code
+cannot be shipped together in one binary. A personal build made on the player's own machine is not
+affected; for that reason no prebuilt APK with the game core may be distributed from this project either.
+
+## LessUnderRated's Chronicle-rs and ChronicleTwo-rs Android ports
+
+<https://github.com/LessUnderRated/Chronicle-rs> and <https://github.com/LessUnderRated/ChronicleTwo-rs>,
+branch `ccr-3c2807db-504m84` (Chronicle Android 0.7.18, ChronicleTwo Android 0.1.48). These Android
+shells were written in those forks by this repository's owner (LessUnderRated, with Claude), so the
+code is reused here under this repository's GPL-3.0. The decompilation upstreams they fork
+(TheMoonPeople/Chronicle, TheMoonPeople/ChronicleTwo) contributed none of the code taken here.
+
+- `android/native/src/touch_model.*`, `touch_pad.*`: the touch scheme of `android/src/touch.rs`
+  (the screen as an SDL virtual gamepad, floating stick, eight-way d-pad, triggers resting at AXIS_MIN,
+  the touch pad stepping aside for a real controller), ported to C++ and changed for an FPS.
+- `android/native/src/log.cpp`: a C++ port of `android/src/logcat.rs` (stdio to logcat and a file,
+  the previous run kept, the crash report written before debuggerd's).
+- `android/app/.../TouchOverlay.java`, `Bo2Activity.java`: adapted from `TouchOverlay.java` and
+  `ChronicleActivity.java` (drawing, editing, saved arrangements, the menu, Back handling).
+- `android/app/.../SetupActivity.java`: written for BO2, following Chronicle-rs's `SetupActivity` flow
+  (ask once, copy with progress, then start).
+- `android/app/.../CrashReport.java` (Chronicle-rs) and `Power.java` (ChronicleTwo-rs only): taken with
+  names and paths changed.
+- `android/app/build.gradle.kts`, `android/native/CMakeLists.txt`: the SDL3-from-one-checkout layout.
+
+Neither fork carries a LICENSE file. The reuse under GPL-3.0 rests on authorship: everything taken was
+written in those forks by this repository's owner (checked with `git log` on `android/` in both).
+
+## doukutsu-rs — MIT
+
+`android/app/.../Bo2DocumentsProvider.java` comes from Chronicle-rs's `ChronicleDocumentsProvider`,
+which is adapted from doukutsu-rs's `DoukutsuDocumentsProvider`. Copyright 2020 doukutsu-rs
+contributors; the MIT license is in `licenses/doukutsu-rs-MIT.txt`.
+
+## SDL 3 — zlib, with bundled code
+
+Built from source at the tag in `android/sdl3-tag.txt` and linked as `libSDL3.so`; its Java glue
+(`org.libsdl.app`) is compiled into the APK. License in `licenses/SDL-zlib.txt`. Two pieces of SDL's
+bundled code are compiled into that build for Android:
+
+- yuv2rgb, Copyright (c) 2016 Adrien Descamps, BSD-3-Clause: `licenses/SDL-yuv2rgb-BSD-3-Clause.txt`.
+- HIDAPI (`src/hidapi/android`), offered under a choice of licenses; used here under GPL-3.0:
+  `licenses/SDL-hidapi-LICENSE.txt` (the choice) and `licenses/SDL-hidapi-GPL-3.0.txt`.
+
+## Snapdragon Game Super Resolution 1 — BSD-3-Clause
+
+The SGSR upscaler in `runtime/gfx/vk/vk_frame.cpp` (`kSgsrFs`) is adapted from Qualcomm's
+`sgsr/v1/include/glsl/sgsr1_shader_mobile.frag` in https://github.com/SnapdragonStudios/snapdragon-gsr
+(commit d926f07): separate texture and sampler bindings, its constants from a push constant, renamed
+inputs. Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved. The BSD-3-Clause
+license is in `licenses/snapdragon-gsr-BSD-3-Clause.txt`.
+
+## In the APK
+
+Every APK built from this repository, the shell without the game included, carries `LICENSE`, this file
+and `licenses/` under `assets/licenses/`.

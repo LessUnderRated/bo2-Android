@@ -1,0 +1,16 @@
+[package]
+name = "bo2-logd"
+version = "0.1.0"
+edition = "2021"
+description = "Receives the Bo2-APK app's logs over Tailscale and stores them per session"
+license = "GPL-3.0-only"
+publish = false
+
+# No dependencies on purpose: std's TcpListener, a minimal HTTP/1.1 reader, and the OS's local clock.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

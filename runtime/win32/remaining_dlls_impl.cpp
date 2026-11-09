@@ -18,6 +18,7 @@
 #include <cstring>
 #include <cstdarg>
 #include <cctype>              // isalnum, for the MSL texture-name scan
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -230,17 +231,25 @@ static constexpr uint32_t kSteamAppId = 212910;   // Black Ops II - Zombies
 #else
 static constexpr uint32_t kSteamAppId = 202970;   // Black Ops II (campagne)
 #endif
-[[noreturn]] static void steam_reel_refus(const std::string& why) {
+[[noreturn, maybe_unused]] static void steam_reel_refus(const std::string& why) {
     fprintf(stderr, "[STEAM-REEL] refus : %s\n", why.c_str());
     std::string m;   // ni ' ni " dans la commande du shell
+#if defined(__APPLE__)
     for (char c : why) m += c == '\'' ? std::string("’") : c == '"' ? std::string("”") : std::string(1, c);
     const std::string cmd = "osascript -e 'display alert \"Black Ops II\" message \"" + m + "\" giving up after 600' >/dev/null 2>&1 &";   // détachée : on sort tout de suite
     system(cmd.c_str());
+#else
+    // Android : pas d'osascript. Le shell pose BO2_REFUSAL_FILE ; il y lit la raison au retour et l'affiche.
+    (void)m;
+    if (const char* f = getenv("BO2_REFUSAL_FILE"); f && *f) {
+        if (FILE* o = fopen(f, "w")) { fputs(why.c_str(), o); fclose(o); }
+    }
+#endif
     _exit(78);
 }
 // Refusal text in the Mac's language (the 9 of tools/setup_window.swift), English otherwise. %u = the Steam app id.
 enum SteamRefus { kSteamAbsent, kSteamAncien, kSteamInit, kSteamPasPossede };
-static std::string steam_texte(SteamRefus k) {
+[[maybe_unused]] static std::string steam_texte(SteamRefus k) {
     static const char* const langues[] = {"fr", "en", "de", "es", "it", "pt", "pl", "ru", "ja"};
     static const char* const textes[][4] = {
         {"Steam pour Mac est introuvable. Installez-le (store.steampowered.com), connectez-vous, puis relancez.",
@@ -281,6 +290,7 @@ static std::string steam_texte(SteamRefus k) {
          "Black Ops II（%u）がSteamライブラリにありません。"},
     };
     std::string l = "en";   // first of AppleLanguages: ( "fr-FR", ... ) or ( fr, ... )
+#if defined(__APPLE__)
     if (FILE* p = popen("defaults read -g AppleLanguages 2>/dev/null", "r")) {
         char b[256] = {0};
         fread(b, 1, sizeof b - 1, p);
@@ -290,16 +300,101 @@ static std::string steam_texte(SteamRefus k) {
             if (isalpha((unsigned char)q[0]) && isalpha((unsigned char)q[1])) l.assign(q, 2);
         }
     }
+#else
+    // Android: the shell passes the phone's language as BO2_LANG ("fr", "fr-FR", ...).
+    if (const char* e = getenv("BO2_LANG"); e && isalpha((unsigned char)e[0]) && isalpha((unsigned char)e[1]))
+        l.assign(e, 2);
+#endif
     size_t i = 1;
     for (size_t j = 0; j < sizeof langues / sizeof *langues; j++) if (l == langues[j]) i = j;
     char m[512];
     snprintf(m, sizeof m, textes[i][k], kSteamAppId);
     return m;
 }
+#if (defined(__ANDROID__) || defined(BO2_HARNESS)) && !defined(BO2_REQUIRE_STEAM)   // BO2_HARNESS: Bo2-APK's Linux test harness
+// Android: there is no Steam client on a phone, and the runtime resolves the game's imports itself, so there is no
+// steam_api library to swap. The answers are fixed instead (the owner's decision; Bo2-APK docs/STEAM.md):
+//   BIsSubscribedApp -> true for Black Ops II itself; a DLC is owned and installed when its files are in the game
+//   folder (below); BLoggedOn -> true; StoreStats -> true (stats stay local); RestartAppIfNecessary -> false
+//   (impl_SteamAPI_RestartAppIfNecessary).
+// The DLC answer follows the player's install, as Steam's would: a map pack whose loader fast file is in zone/all is
+// installed, any other is not, so the game never mounts a pack it cannot load (the first S26 run did, from a fixed
+// list, and the Zombies lobby failed). This answers Steam's question, it does not supply content.
+// BO2_REQUIRE_STEAM (REQUIRE_STEAM=ON) builds the real path below instead, which refuses on a phone.
+extern "C" const char* win32_game_dir();
+namespace steam_stub {
+bool logged(void*) { return true; }
+// Each answer is logged once per (question, app id).
+static void say_once(const char* what, uint32_t appid, bool yes) {
+    static std::atomic<uint64_t> said[64];
+    const uint64_t key = ((uint64_t)(what[0] == 'B' && what[3] == 'D') << 32) | appid;
+    for (auto& s : said) {
+        uint64_t cur = s.load();
+        if (cur == key + 1) return;
+        if (cur == 0 && s.compare_exchange_strong(cur, key + 1)) {
+            fprintf(stderr, "[STEAM-STUB] %s(%u) -> %s\n", what, appid, yes ? "true" : "false");
+            return;
+        }
+    }
+}
+// Zombies map packs: the app id the game asks about and the loader it then queues (pack order of the game's own
+// ContentPack log: DLCZM0, DLC1..DLC4).
+static int dlc_on_disk(uint32_t appid) {   // 1 present, 0 absent, -1 not a known map pack
+    static const struct { uint32_t appid; const char* loader; } kPacks[] = {
+        {219092, "dlczm0_load_zm.ff"}, {219096, "dlc1_load_zm.ff"}, {219099, "dlc2_load_zm.ff"},
+        {219102, "dlc3_load_zm.ff"}, {219104, "dlc4_load_zm.ff"},
+    };
+    for (const auto& p : kPacks) {
+        if (p.appid != appid) continue;
+        struct stat st {};
+        return ::stat((std::string(win32_game_dir()) + "/zone/all/" + p.loader).c_str(), &st) == 0 ? 1 : 0;
+    }
+    return -1;
+}
+bool subscribed(void*, uint32_t appid) {
+    // Black Ops II: Campaign, Multiplayer, Zombies.
+    const bool game = appid == 202970 || appid == 202990 || appid == 212910 || appid == kSteamAppId;
+    const bool yes = game || dlc_on_disk(appid) == 1;
+    say_once("BIsSubscribedApp", appid, yes);
+    return yes;
+}
+bool dlc(void*, uint32_t appid) {
+    const bool yes = dlc_on_disk(appid) == 1;
+    say_once("BIsDlcInstalled", appid, yes);
+    return yes;
+}
+bool store(void*) { return true; }
+// The SteamID the game is told: BO2_STEAM_ID (decimal), else a fixed individual account in the public universe.
+uint64_t steam_id() {
+    if (const char* e = getenv("BO2_STEAM_ID"); e && *e) {
+        const unsigned long long v = strtoull(e, nullptr, 10);
+        if (v) return v;
+    }
+    return 0x0110000100000001ull;   // universe 1, individual, account 1
+}
+}  // namespace steam_stub
+static const SteamReel& steam_reel() {
+    static const SteamReel r = [] {
+        static uint32_t iface_obj;   // non-null stand-ins: the stubs never dereference them
+        SteamReel r;
+        r.apps = r.user = r.stats = &iface_obj;
+        r.logged = steam_stub::logged;
+        r.sub = steam_stub::subscribed;
+        r.dlc = steam_stub::dlc;
+        r.store = steam_stub::store;
+        r.id = steam_stub::steam_id();
+        fprintf(stderr, "[STEAM-STUB] no Steam client on Android: fixed answers (subscribed, 5 DLC, SteamID %llu)\n",
+                (unsigned long long)r.id);
+        return r;
+    }();
+    return r;
+}
+#else
 static const SteamReel& steam_reel() {
     static const SteamReel r = [] {
         SteamReel r;
-        const std::string lib = std::string(getenv("HOME")) + "/Library/Application Support/Steam/Steam.AppBundle/Steam/"
+        const char* home = getenv("HOME");   // unset on Android (REQUIRE_STEAM=ON): no library, so a clean refusal
+        const std::string lib = std::string(home ? home : "") + "/Library/Application Support/Steam/Steam.AppBundle/Steam/"
                                 "Contents/MacOS/Frameworks/Steam Helper.app/Contents/MacOS/libsteam_api.dylib";
         void* h = dlopen(lib.c_str(), RTLD_NOW);
         if (!h) steam_reel_refus(steam_texte(kSteamAbsent));
@@ -344,6 +439,7 @@ static const SteamReel& steam_reel() {
     }();
     return r;
 }
+#endif
 static void impl_SteamAPI_Init(State& s) { steam_reel(); s.gpr.rax.dword = 1; win32_cdecl_ret(s); }
 BINK_STUB(SteamAPI_RegisterCallback)
 BINK_STUB(SteamAPI_Shutdown)
@@ -676,6 +772,10 @@ struct GfxDraw {
     // Mip range of the SRV bound per PS slot: MostDetailedMip << 8 | MipLevels (MipLevels -1 -> 0 = all);
     // 0 = the whole chain. The downsample chains read one level of the texture they write into.
     uint32_t psmip[kMaxPSTex];
+    // BO2_IB_RESIDENT (Android): the start and size of the STATIC index buffer `ib` is a slice of, when the draw's
+    // vertices are resident too (C50); nullptr = the indices are copied as usual. Its bytes never change, so the
+    // consumer keeps it on the GPU and draws from it in place.
+    const void* ib_res; uint32_t ib_res_bytes;
 };
 extern "C" void gfx_real_draw(const GfxDraw* d);
 // Declared at FILE scope: a block-scope extern inside an extern "C"
@@ -1434,6 +1534,7 @@ static uint64_t g_vbcopie_octets = 0, g_vbcopie_dessins = 0, g_vbcopie_decales =
 // imprimés sur [VB-COPIE] : perdus_dessins= (VB/IB, dessin jeté), perdus_flux= (flux 1-3), perdus_cb= (CB liés).
 static uint64_t g_dynperdu_dessins = 0, g_dynperdu_flux = 0, g_dynperdu_cb = 0;
 static uint64_t g_vbcopie_residents = 0, g_c50_statiques_mappes = 0;                  // C50
+static uint64_t g_vbcopie_ib_residents = 0;                                           // BO2_IB_RESIDENT
 static std::vector<uint8_t> g_scratch_cb[2 * kMaxCB];
 // C47 : chaque relecture d'un scratch de CB recoit un numero neuf (jamais 0) ; voir GfxDraw::vscb_fill.
 static uint32_t g_cb_fill = 0, g_cb_fill_of[2 * kMaxCB] = {0};
@@ -1544,7 +1645,29 @@ static void rd_sortie(const char* why, uint32_t idxCount) {
     if (puiss2(++n)) fprintf(stderr, "[RD-SORTIE] %s cumul=%llu idx=%u vs=%08x ps=%08x il=%08x vb=%08x ib=%08x stride=%u rtv=%08x\n", why, (unsigned long long)n,
                              idxCount, g_cur_vs, g_cur_ps, g_cur_il, g_ui_vb, g_ui_ib, g_ui_stride, g_cur_rtv);
 }
+// BO2_RD_SCISSOR_EARLY (default on): a draw whose scissor rectangle is empty rasterizes nothing in D3D11 (no colour,
+// depth or stencil write), so it is dropped here, before any lookup or copy. On the S26 about one draw in six was such
+// a draw, and each was copied whole (indices, constants) only for the Vulkan backend to skip it. The test is the
+// backend's without its clamp to the target's size (not known here): a rectangle empty here is empty there too.
+static uint64_t g_rd_ciseau_vides = 0;
+static bool rd_ciseau_vide() {
+    static const bool on = [] {
+        const bool v = bo2_env_on("BO2_RD_SCISSOR_EARLY", true);
+        fprintf(stderr, "[RD-SCISSOR] draws with an empty scissor rectangle dropped before copying: %s (BO2_RD_SCISSOR_EARLY)\n",
+                v ? "on" : "off");
+        return v;
+    }();
+    if (!on || !g_ciseau || !g_cur_raster.ciseau) return false;
+    const int32_t x0 = g_sc_now[0] > 0 ? g_sc_now[0] : 0, y0 = g_sc_now[1] > 0 ? g_sc_now[1] : 0;
+    const int32_t x1 = g_sc_now[2] > 0 ? g_sc_now[2] : 0, y1 = g_sc_now[3] > 0 ? g_sc_now[3] : 0;
+    if (x1 > x0 && y1 > y0) return false;
+    if (puiss2(++g_rd_ciseau_vides) && g_rd_ciseau_vides >= 1024)
+        fprintf(stderr, "[RD-SCISSOR] %llu draws with an empty scissor rectangle dropped before copying\n",
+                (unsigned long long)g_rd_ciseau_vides);
+    return true;
+}
 static void real_draw(uint32_t idxCount, uint32_t startIdx, int32_t baseVtx) {
+    if (rd_ciseau_vide()) return;
     if (g_cur_vs && !g_cur_ps && g_cur_dsv_prof && idxCount) {   // D3D11 would still write depth
         static uint64_t n = 0;
         if (puiss2(++n)) fprintf(stderr, "[DEPTH-DSV] dessins SANS pixel shader jetes avec un DSV lie : %llu (rtv=%08x res=%08x)\n",
@@ -1581,15 +1704,17 @@ static void real_draw(uint32_t idxCount, uint32_t startIdx, int32_t baseVtx) {
         if ((++nrep % 60) == 1)
             fprintf(stderr, "[VB-COPIE] image %u : %llu dessins, %.2f Mo recopies depuis "
                             "la memoire invitee (%.1f ko par dessin) decales=%llu (C46) residents=%llu "
-                            "statiques_mappes=%llu (C50) perdus_dessins=%llu perdus_flux=%llu perdus_cb=%llu (P772)\n",
+                            "statiques_mappes=%llu (C50) ib_residents=%llu perdus_dessins=%llu perdus_flux=%llu perdus_cb=%llu (P772)\n",
                     g_present_frames, (unsigned long long)g_vbcopie_dessins,
                     (double)g_vbcopie_octets / (1024.0 * 1024.0),
                     g_vbcopie_dessins ? (double)g_vbcopie_octets / 1024.0
                                         / (double)g_vbcopie_dessins : 0.0,
                     (unsigned long long)g_vbcopie_decales, (unsigned long long)g_vbcopie_residents,
-                    (unsigned long long)g_c50_statiques_mappes, (unsigned long long)g_dynperdu_dessins,
+                    (unsigned long long)g_c50_statiques_mappes, (unsigned long long)g_vbcopie_ib_residents,
+                    (unsigned long long)g_dynperdu_dessins,
                     (unsigned long long)g_dynperdu_flux, (unsigned long long)g_dynperdu_cb);
         g_vbcopie_octets = 0; g_vbcopie_dessins = 0; g_vbcopie_decales = 0; g_vbcopie_residents = 0;
+        g_vbcopie_ib_residents = 0;
         last_frame = g_present_frames; per_frame = 0;
     }
     // The per-frame cap bounds host work, but it is a HEAD cut: the frontend issues
@@ -1618,8 +1743,7 @@ static void real_draw(uint32_t idxCount, uint32_t startIdx, int32_t baseVtx) {
     // Copy exactly the index range this draw uses, plus a vertex window sized
     // from the largest index in it (a whole dynamic buffer can be megabytes).
     uint32_t ib_bytes = idxCount * i16;
-    g_scratch_ib.resize(ib_bytes);
-    win32_mem_read_block(g_scratch_ib.data(), ibd + g_ui_iboff + startIdx * i16, ib_bytes);
+    const uint32_t ib_va = ibd + g_ui_iboff + startIdx * i16;
     // 🎯 C50 (P685) — LES SOMMETS STATIQUES RESTENT SUR LE GPU. Quand tous les flux que lit ce dessin
     // viennent de tampons statiques (tampon_statique), on ne balaie pas les index et on ne copie pas de
     // fenetre : on passe le tampon entier, que le backend Metal cree une fois et garde. Le decalage
@@ -1644,6 +1768,36 @@ static void real_draw(uint32_t idxCount, uint32_t startIdx, int32_t baseVtx) {
         resident = obj && (sl ? g_vb_stride[sl] : g_ui_stride) && tampon_statique(obj, &res_va[sl], &res_n[sl])
                    && off < res_n[sl] && (off & 3) == 0;
     }
+    // Android : un dessin dont les sommets sont residents ne lit pas ses index (pas de fenetre a dimensionner, pas de
+    // rebasage) : ils partent tels quels de la memoire invitee vers l'arene de l'image (guest_view), une copie au lieu
+    // de deux (le fil backend passait ~20 % de son temps dans memmove sur le S26). Sinon, la copie d'avant.
+    const uint8_t* ib_src;
+#if defined(__ANDROID__)
+    if (resident) {
+        ib_src = guest_view(ib_va, ib_bytes, g_scratch_ib);
+    } else
+#endif
+    {
+        g_scratch_ib.resize(ib_bytes);
+        win32_mem_read_block(g_scratch_ib.data(), ib_va, ib_bytes);
+        ib_src = g_scratch_ib.data();
+    }
+    // BO2_IB_RESIDENT (default on, Android): with the vertices resident, a STATIC index buffer (tampon_statique) is
+    // resident too: the backend uploads it once and draws from it in place, so its indices are no longer copied twice
+    // per draw (into the frame's arena here, then into the Vulkan ring). Its slice must hold the draw's indices at a
+    // multiple of the index size. Witness: `ib_residents=` on [VB-COPIE].
+    uint32_t ibr_va = 0, ibr_n = 0;
+    bool ib_resident = false;
+#if defined(__ANDROID__)
+    static const bool ib_res_on = [] {
+        const bool on = bo2_env_on("BO2_IB_RESIDENT", true);
+        fprintf(stderr, "[C50-IB] static index buffers resident on the GPU: %s (BO2_IB_RESIDENT, with BO2_VB_RESIDENT)\n",
+                on ? "on" : "off");
+        return on;
+    }();
+    ib_resident = resident && ib_res_on && tampon_statique(g_ui_ib, &ibr_va, &ibr_n) && ib_va >= ibr_va &&
+                  (uint64_t)ib_va + ib_bytes <= (uint64_t)ibr_va + ibr_n && (ib_va - ibr_va) % i16 == 0;
+#endif
     uint32_t mini = 0;
     const uint32_t maxi = resident ? 0 : ib_min_max(g_scratch_ib.data(), idxCount, i16, &mini);
     static const bool c46 = [] {
@@ -1668,9 +1822,10 @@ static void real_draw(uint32_t idxCount, uint32_t startIdx, int32_t baseVtx) {
     const uint8_t* vbp = resident ? bo2_g_base + res_va[0] + g_ui_vboff   // C50 : vbd == res_va[0]
                                   : guest_view(vbd + g_ui_vboff + s * g_ui_stride, (uint32_t)vb_bytes,
                                                g_scratch_vb);   // C35, C46
-    g_vbcopie_octets += (resident ? 0 : vb_bytes) + ib_bytes;   // [VB-COPIE], voir P520
+    g_vbcopie_octets += (resident ? 0 : vb_bytes) + (ib_resident ? 0 : ib_bytes);   // [VB-COPIE], voir P520
     ++g_vbcopie_dessins;
     if (resident) ++g_vbcopie_residents;
+    if (ib_resident) ++g_vbcopie_ib_residents;
 
     GfxDraw d{};
     d.vs = g_cur_vs; d.ps = g_cur_ps;
@@ -1698,12 +1853,14 @@ static void real_draw(uint32_t idxCount, uint32_t startIdx, int32_t baseVtx) {
             d.vb2_bytes[sl - 1] = (uint32_t)nb;
         }
     }
-    d.ib = g_scratch_ib.data(); d.ib_bytes = ib_bytes; d.ib_fmt = i16 == 2 ? 57u : 42u;
+    d.ib = ib_src; d.ib_bytes = ib_bytes; d.ib_fmt = i16 == 2 ? 57u : 42u;
     d.idx_count = idxCount; d.start_idx = 0; d.base_vtx = decale ? 0 : baseVtx;   // C46
     for (uint32_t sl = 0; sl < 4; sl++) {   // C50
         d.res[sl] = (resident && want[sl] && res_n[sl]) ? bo2_g_base + res_va[sl] : nullptr;
         d.res_bytes[sl] = d.res[sl] ? res_n[sl] : 0;
     }
+    d.ib_res = ib_resident ? bo2_g_base + ibr_va : nullptr;   // BO2_IB_RESIDENT (d.ib is then in place: guest_view)
+    d.ib_res_bytes = ib_resident ? ibr_n : 0;
     d.topo = g_ui_topo;
     d.rtv  = g_cur_rtv;
     // FONT DRAW AUDIT: everything the shader could possibly be missing, side by side
@@ -1755,7 +1912,52 @@ static void real_draw(uint32_t idxCount, uint32_t startIdx, int32_t baseVtx) {
     static uint32_t last_vs_obj[kMaxCB] = {0}, last_ps_obj[kMaxCB] = {0};
     static uint32_t last_vs_addr[kMaxCB] = {0}, last_ps_addr[kMaxCB] = {0};
     static uint32_t last_vs_gen[kMaxCB] = {0}, last_ps_gen[kMaxCB] = {0};
-    for (int i = 0; i < kMaxCB; i++) {
+    // BO2_CB_DIRECT (default on). The bytes of a bound constant buffer are handed to gfx_real_draw where they are in
+    // guest memory (guest_view), instead of being copied into g_scratch_cb first: gfx_real_draw copies them into the
+    // frame's arena at once, under the same D3D lock, so the bytes are the same and one copy of every refilled buffer
+    // goes. The fill counter (C47) still moves exactly when the old path re-read the buffer (object, address, Map
+    // generation or size changed). An empty slot costs nothing (the old loop made four hash lookups for each of the 16
+    // slots, bound or not), and a bound one costs two (its buffer, its Map generation; the ring map only without a
+    // backing). BO2_CB_DIRECT=0 is the old loop below.
+    static const bool cb_direct = [] {
+        const bool on = bo2_env_on("BO2_CB_DIRECT", true);
+        fprintf(stderr, "[CB-DIRECT] constant buffers read in place, empty slots skipped: %s (BO2_CB_DIRECT)\n",
+                on ? "on" : "off");
+        return on;
+    }();
+    static uint32_t last_n[2 * kMaxCB] = {0};
+    for (int k = 0; cb_direct && k < 2 * kMaxCB; k++) {
+        const bool ps = k >= kMaxCB;
+        const int i = ps ? k - kMaxCB : k;
+        const uint32_t obj = ps ? g_pscb[i] : g_vscb[i];
+        if (!obj) continue;
+        const auto b = g_geo_bufs.find(obj);
+        const uint32_t n = b != g_geo_bufs.end() ? b->second.size : 0;
+        uint32_t a = b != g_geo_bufs.end() ? b->second.backing : 0;
+        bool in_ring = false;
+        if (!a) {
+            const auto rm = g_ui_ring_map.find(obj);
+            if (rm != g_ui_ring_map.end()) { a = rm->second; in_ring = true; }
+        }
+        if (!a) {
+            if (b != g_geo_bufs.end() && n && !in_ring) g_dynperdu_cb++;   // dyn_sans_tranche (P772)
+            continue;
+        }
+        if (!n || n > (1u << 20)) continue;
+        const auto g = g_buf_gen.find(obj);
+        const uint32_t gen = g != g_buf_gen.end() ? g->second : 0;
+        uint32_t* lo = ps ? last_ps_obj : last_vs_obj;
+        uint32_t* la = ps ? last_ps_addr : last_vs_addr;
+        uint32_t* lg = ps ? last_ps_gen : last_vs_gen;
+        if (obj != lo[i] || a != la[i] || gen != lg[i] || n != last_n[k]) {
+            g_cb_fill_of[k] = cb_fill_neuf();   // C47: new contents
+            lo[i] = obj; la[i] = a; lg[i] = gen; last_n[k] = n;
+        }
+        const void* p = guest_view(a, n, g_scratch_cb[k]);
+        if (ps) { d.pscb[i] = p; d.pscb_bytes[i] = n; d.pscb_fill[i] = g_cb_fill_of[k]; }
+        else    { d.vscb[i] = p; d.vscb_bytes[i] = n; d.vscb_fill[i] = g_cb_fill_of[k]; }
+    }
+    for (int i = 0; !cb_direct && i < kMaxCB; i++) {
         uint32_t a = buf_data_addr(g_vscb[i]);
         auto b = g_geo_bufs.find(g_vscb[i]);
         uint32_t n = (b != g_geo_bufs.end()) ? b->second.size : 0;
@@ -2974,6 +3176,11 @@ extern "C" bool bo2_relais_jeu(const char* fichier) {
                      : strstr(fichier, "steam://run/202990") ? "multi" : nullptr;
     fprintf(stderr, "[SHELLEXEC] \"%.200s\" -> %s\n", fichier, mode ? mode : "non servi");
     if (!mode) return false;
+#if !defined(__APPLE__)
+    // Android : un seul mode par APK pour l'instant (le shell lance Zombies) ; pas de scripts/play_steam.sh a relancer.
+    fprintf(stderr, "[SHELLEXEC] changement de jeu (%s) non servi sur Android\n", mode);
+    return false;
+#endif
     // Environnement vide : les BO2_* de ce jeu (tubes, fils heberges, leviers des Zombies) ne valent pas pour l'autre. Passent
     // seulement le choix du panneau, le nom du joueur et le HUD Metal (scripts/launch.sh).
     std::string garde;
@@ -2998,6 +3205,9 @@ extern "C" bool bo2_relais_jeu(const char* fichier) {
     posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
     posix_spawnattr_t at;
     posix_spawnattr_init(&at);
+#if !defined(POSIX_SPAWN_CLOEXEC_DEFAULT)   // Apple only: elsewhere the relay inherits the game's descriptors
+#define POSIX_SPAWN_CLOEXEC_DEFAULT 0
+#endif
     posix_spawnattr_setflags(&at, POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT);   // hors de la session du jeu
     const int rc = posix_spawn(&pid, "/bin/sh", &fa, &at, argv, environ);
     posix_spawnattr_destroy(&at);
@@ -4884,9 +5094,9 @@ extern "C" bool d3d_vtbl_dispatch(State& s, uint32_t addr) {
                 else {
                     // A stencil MASK dropped by one of real_draw's early exits leaves its children tested
                     // against a plane that was never written: name it.
-                    const uint64_t av = g_st_emis;
+                    const uint64_t av = g_st_emis, sv = g_rd_ciseau_vides;   // an empty scissor is not a rejection
                     real_draw(arg(1), arg(2), (int32_t)arg(3));
-                    if (g_st_emis == av && g_cur_depth.st && g_cur_dsv_res && puiss2(++g_st_rejetes))
+                    if (g_st_emis == av && g_rd_ciseau_vides == sv && g_cur_depth.st && g_cur_dsv_res && puiss2(++g_st_rejetes))
                         fprintf(stderr, "[POCHOIR] dessins a pochoir REJETES par real_draw (ps=%08x indices=%u, "
                                         "cumul %llu)\n", g_cur_ps, arg(1), (unsigned long long)g_st_rejetes);
                 }
@@ -5308,14 +5518,24 @@ extern "C" bool d3d_vtbl_dispatch(State& s, uint32_t addr) {
                                 dd->second.depth == sd->second.depth &&
                                 dd->second.bytes == sd->second.bytes) {
                                 copie_volume = true;
+                                // The staging volume's bytes straight from guest memory: the 4 GiB guest map is
+                                // flat (page_for_read is g_base + page), so the range is contiguous, and the
+                                // backend copies it at once under its own lock. The old copy into a static vector
+                                // first was 2 MB more memcpy per frame on the backend thread (S26 profile).
+                                const uint32_t vb = sd->second.backing, vn = sd->second.bytes;
+                                const bool flat_ok = (uint64_t)vb + vn <= (1ull << 32);
                                 static std::vector<uint8_t> cb2;
-                                cb2.resize(sd->second.bytes);
-                                win32_mem_read_block(cb2.data(), sd->second.backing,
-                                                     sd->second.bytes);
+                                const uint8_t* vsrc;
+                                if (flat_ok) {
+                                    vsrc = bo2_g_base + vb;
+                                } else {
+                                    cb2.resize(vn);
+                                    win32_mem_read_block(cb2.data(), vb, vn);
+                                    vsrc = cb2.data();
+                                }
                                 gfx_register_texture_vol(arg(1), dd->second.w,
                                                          dd->second.h, dd->second.depth,
-                                                         1, dd->second.fmt, cb2.data(),
-                                                         (uint32_t)cb2.size(),
+                                                         1, dd->second.fmt, vsrc, vn,
                                                          dd->second.pitch,
                                                          dd->second.slice);
                                 static uint32_t nvc = 0;
@@ -5330,9 +5550,9 @@ extern "C" bool d3d_vtbl_dispatch(State& s, uint32_t addr) {
                                     // zeros and a volume of real light grid
                                     // produce identical log lines otherwise.
                                     uint32_t mn = 255, mx = 0; uint64_t sum = 0;
-                                    const size_t nb = cb2.size();
+                                    const size_t nb = vn;
                                     for (size_t q = 0; q < nb; q++) {
-                                        const uint8_t v = cb2[q];
+                                        const uint8_t v = vsrc[q];
                                         if (v < mn) mn = v;
                                         if (v > mx) mx = v;
                                         sum += v;

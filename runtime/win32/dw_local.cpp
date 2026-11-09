@@ -13,7 +13,11 @@
 #include "win32_shim.h"
 #include "bo2_getenv.h"
 
+#if defined(__APPLE__)
 #include <CommonCrypto/CommonCryptor.h>
+#else
+#include "bo2_platform.h"   // bo2_des3_cbc : CommonCrypto n'existe pas sur Android
+#endif
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <zlib.h>
@@ -487,12 +491,21 @@ bool iv_of(uint32_t counter, uint8_t iv[8]) {
     return true;
 }
 bool des3_cbc(bool enc, const uint8_t key[24], const uint8_t iv[8], std::vector<uint8_t>& buf) {
+#if defined(__APPLE__)
     std::vector<uint8_t> out(buf.size());
     size_t moved = 0;
     bool ok = CCCrypt(enc ? kCCEncrypt : kCCDecrypt, kCCAlgorithm3DES, 0, key, 24, iv, buf.data(), buf.size(),
                       out.data(), out.size(), &moved) == kCCSuccess && moved == buf.size();
     if (ok) buf.swap(out);
     return ok;
+#else
+    // Meme operation (3DES EDE, CBC, sans bourrage : options 0 de CCCrypt) ; refuse une taille non multiple de 8,
+    // comme CCCrypt rend kCCAlignmentError.
+    std::vector<uint8_t> out(buf);
+    if (!bo2_des3_cbc(enc, key, iv, out.data(), out.size())) return false;
+    buf.swap(out);
+    return true;
+#endif
 }
 
 // The game's bit stream: fields one after the other, least significant bit first. A body starts with one bit that
@@ -587,6 +600,8 @@ constexpr uint64_t LEAGUE_TEAM_ID = 1, LEAGUE_RANKED_ID = 10, LEAGUE_SUBDIVISION
 // "setdvar" is accepted only inside a "settings" block (0x47591f -> 0x476059) and applies as the file is read (0x5da310).
 // Zombies: the structure of the shipped playlist, English only: the globe lists the supercategories of the owned maps,
 // the mode list the playlists of a category, and a solo playlist carries "rule party_maxplayers 1" (P1043).
+// Playlist ids stay under 32: the client registers its "playlist" set with 0x20 entries (0x84c94d) and drops any
+// higher id ("Group ID out of bounds for set 'playlist'"), which emptied the solo lobby when solo used 91-99.
 // "rule party_minplayers" is 1 everywhere so that a public match starts alone, as in multiplayer.
 // Multiplayer: same format; "all,<gametype>,<weight>" takes every base map, and "categories" names the category.
 // party_minplayers 1 lets a lone host start.
@@ -657,6 +672,8 @@ name english "DIG SITE"
 icon playlist_coop_zombie
 filter playermatch
 unlockxp 0
+dlc 6
+hideifmissingdlc
 category transit
 name english "BUS DEPOT"
 icon playlist_coop_zombie
@@ -1144,7 +1161,7 @@ supercategories zm_tomb_solo
 unlockxp 0
 dlc 6
 hideifmissingdlc
-playlist 91
+playlist 16
 name english "STORY"
 description english "Play the full story of this map."
 unlockxp 0
@@ -1164,7 +1181,7 @@ rule party_readyAllowOnlyLocalPlayers 1
 rule party_autoteams 0
 rule allowAllNAT 1
 zm_transit,zclassic,transit,1
-playlist 92
+playlist 17
 name english "SURVIVAL"
 description english "Survive with basic weapons and no upgrades."
 unlockxp 0
@@ -1184,7 +1201,7 @@ rule party_autoteams 0
 rule party_readyAllowOnlyLocalPlayers 1
 rule allowAllNAT 1
 zm_transit,zstandard,transit,1
-playlist 93
+playlist 18
 name english "SURVIVAL"
 description english "Survive in the town, with upgrades available."
 unlockxp 0
@@ -1204,7 +1221,7 @@ rule party_autoteams 0
 rule party_readyAllowOnlyLocalPlayers 1
 rule allowAllNAT 1
 zm_transit,zstandard,town,1
-playlist 94
+playlist 19
 name english "SURVIVAL"
 description english "Survive at the farm, with a few weapons and upgrades."
 unlockxp 0
@@ -1224,7 +1241,7 @@ rule party_autoteams 0
 rule party_readyAllowOnlyLocalPlayers 1
 rule allowAllNAT 1
 zm_transit,zstandard,farm,1
-playlist 95
+playlist 20
 name english "SURVIVAL"
 description english "Survive in the small test town."
 unlockxp 0
@@ -1246,7 +1263,7 @@ rule party_autoteams 0
 rule party_readyAllowOnlyLocalPlayers 1
 rule allowAllNAT 1
 zm_nuked,zstandard,nuked,1
-playlist 96
+playlist 21
 name english "STORY"
 description english "Play the full story of this map."
 unlockxp 0
@@ -1268,7 +1285,7 @@ rule party_readyAllowOnlyLocalPlayers 1
 rule party_autoteams 0
 rule allowAllNAT 1
 zm_highrise,zclassic,rooftop,1
-playlist 97
+playlist 22
 name english "STORY"
 description english "Play the full story of this map."
 unlockxp 0
@@ -1290,7 +1307,7 @@ rule party_readyAllowOnlyLocalPlayers 1
 rule party_autoteams 0
 rule allowAllNAT 1
 zm_prison,zclassic,prison,1
-playlist 98
+playlist 23
 name english "STORY"
 description english "Play the full story of this map."
 unlockxp 0
@@ -1312,7 +1329,7 @@ rule party_readyAllowOnlyLocalPlayers 1
 rule party_autoteams 0
 rule allowAllNAT 1
 zm_buried,zclassic,processing,1
-playlist 99
+playlist 24
 name english "STORY"
 description english "Play the full story of this map."
 unlockxp 0

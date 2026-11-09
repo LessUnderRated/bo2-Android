@@ -88,7 +88,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REMILL = os.path.join(HERE, "remill-src/build/bin/lift/remill-lift-17")
-LLVM17 = "/opt/homebrew/opt/llvm@17"
+LLVM17 = os.environ.get("LLVM17_PREFIX", "/opt/homebrew/opt/llvm@17")
+# BO2_ANDROID=1: lift for Android on Linux (aarch64-linux-android33, ELF symbols without the Mach-O underscore). The
+# runtime, the backends and the final link are then the Android build's (Bo2-APK scripts/lift-android.sh).
+ANDROID = os.environ.get("BO2_ANDROID") == "1"
+CLANG_TARGET = ["--target=aarch64-linux-android33", "-fuse-ld=lld"] if ANDROID else ["-arch", "arm64"]
+SYM = "" if ANDROID else "_"                      # C symbol prefix: Mach-O "_", ELF none
+_TP_REG = "tpidr_el0" if ANDROID else "tpidrro_el0"  # the thread pointer user space reads
 REM = os.path.join(HERE, "remill-src")
 # ── WHICH EXECUTABLE ────────────────────────────────────────────────────────
 # BO2_TARGET=sps|mps|zms (default sps): the three Steam executables, after the
@@ -281,8 +287,8 @@ def fix_ir_text(ir_text):
 # (P663 : 9 runs sur 9 en SIGSEGV a esp-4, sub_4f5520 de C17). clang, lui, pose le
 # datalayout arm64 avant d'optimiser ; il faut donc que `opt` le voie aussi. La
 # disposition de %struct.State est identique sous les deux (247 champs, 3 504 o).
-_ARM64_DL = "e-m:o-i64:64-i128:128-n32:64-S128"
-_ARM64_TRIPLE = "arm64-apple-macosx18.0.0"
+_ARM64_DL = ("e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128" if ANDROID else "e-m:o-i64:64-i128:128-n32:64-S128")
+_ARM64_TRIPLE = "aarch64-unknown-linux-android33" if ANDROID else "arm64-apple-macosx18.0.0"
 
 
 def _retarget_arm64(ir_text):
@@ -401,7 +407,7 @@ def _inline_guest_reads(ir_text):
             continue
         ir_text = re.sub(r'^[^\n]*declare\b[^\n]*@__remill_read_memory_' + suf + r'\([^\n]*\n', '',
                          ir_text, flags=re.M)
-        if thr < 65536:
+        if thr < 65536 and not ANDROID:
             straddle = (f"  %off = and i32 %a, 65535\n  %str = icmp ugt i32 %off, {thr}\n"
                         f"  %slow = or i1 %park, %str\n")
         else:
@@ -539,6 +545,36 @@ def _inline_trivial_intrinsics(ir_text):
 #     non plus. Bit pour bit.
 #
 # 64 / f64 ne sont pas replies : ils passent par mem_write64_ext, 753 + 15 sites.
+# Android (S26) : `g_guest_writes` etait incremente a CHAQUE ecriture invitee, par tous les fils, sur une seule
+# ligne : le fil ordonnanceur (le goulot) et les fils heberges (serveur, rendu, son) se la disputaient a chaque
+# ecriture. Seul cas_spin_note la lit, et sur un fil heberge il tient sa propre serie (bo2_host_backoff_if_hosted).
+# Sur Android elle n'est donc plus incrementee que par le fil ordonnanceur (meme test que la preemption :
+# g_any_hosted, puis le registre de fil compare a bo2_sched_tp). Ailleurs, le code d'avant.
+def _count_guest_writes(inc):
+    # Android (lean write path): nothing here. The count lives in the coroutine's own State (X86State::_padding,
+    # offset 2760), bumped after each write call site by stream_scope_state.py, where the State scope lets LLVM keep it
+    # in a register; cas_spin_note reads it there. No shared line, no thread-pointer test, per store.
+    if ANDROID:
+        return ""
+    if not ANDROID:
+        return ("  %w = load i64, ptr @g_guest_writes, align 8\n"
+                f"  %w1 = add i64 %w, {inc}\n"
+                "  store i64 %w1, ptr @g_guest_writes, align 8\n")
+    return ("  %ahw = load i8, ptr @g_any_hosted, align 1\n"
+            "  %ahwz = icmp eq i8 %ahw, 0\n"
+            "  br i1 %ahwz, label %CW, label %HW\n"
+            "HW:\n"
+            f"  %tpw = call i64 asm \"mrs $0, {_TP_REG}\", \"=r\"()\n"
+            "  %stpw = load i64, ptr @bo2_sched_tp, align 8\n"
+            "  %mew = icmp eq i64 %tpw, %stpw\n"
+            "  br i1 %mew, label %CW, label %XW\n"
+            "CW:\n"
+            "  %w = load i64, ptr @g_guest_writes, align 8\n"
+            f"  %w1 = add i64 %w, {inc}\n"
+            "  store i64 %w1, ptr @g_guest_writes, align 8\n"
+            "  br label %XW\n"
+            "XW:\n")
+
 _WRITE_KINDS = [  # (suffixe, type llvm, preemption)
     ("32",  "i32",   True),
     ("f32", "float", False),
@@ -555,13 +591,37 @@ def _inline_guest_writes(ir_text):
             "@g_w32_preempt_left = external global i64",
             "@g_any_hosted = external global i8",
             "@bo2_sched_tp = external global i64",
+            "@bo2_preempt_now = external global i32",
             "declare dso_local void @win32_thread_write_tick()"]
     for suf, ty, preempt in _WRITE_KINDS:
         if suf not in used:
             continue
         ir_text = re.sub(r'^[^\n]*declare\b[^\n]*@__remill_write_memory_' + suf + r'\([^\n]*\n',
                          '', ir_text, flags=re.M)
-        if preempt:
+        if preempt and ANDROID:
+            # Android : preemption par tranche de temps. Un fil du runtime leve bo2_preempt_now toutes les
+            # BO2_PREEMPT_US ; l'ecriture le teste (une charge volatile, un saut), et seulement s'il est leve : le fil
+            # ordonnanceur ? (meme test que P641), puis win32_thread_write_tick, qui le rabaisse. Plus de decompte
+            # par ecriture partage entre les coroutines.
+            tail = """  %pn = load volatile i32, ptr @bo2_preempt_now, align 4
+  %pnz = icmp ne i32 %pn, 0
+  br i1 %pnz, label %H, label %D
+H:
+  %ah = load i8, ptr @g_any_hosted, align 1
+  %ahz = icmp eq i8 %ah, 0
+  br i1 %ahz, label %T, label %HT
+HT:
+  %tp = call i64 asm "mrs $0, tpidr_el0", "=r"()
+  %stp = load i64, ptr @bo2_sched_tp, align 8
+  %me = icmp eq i64 %tp, %stp
+  br i1 %me, label %T, label %D
+T:
+  call void @win32_thread_write_tick()
+  br label %D
+D:
+  ret ptr %mem
+"""
+        elif preempt:
             # 🔴 P641 — la porte de P615, qui manquait ICI. P615 (21/09) a retire
             # le fil heberge du compteur dans la voie C++ seulement ; ce repliage
             # (17/09) le laissait decrementer depuis tout fil, avec `== 0`. Deux
@@ -598,7 +658,7 @@ T:
   br label %D
 D:
   ret ptr %mem
-"""
+""".replace("tpidrro_el0", _TP_REG)   # Darwin's thread pointer register; Android: tpidr_el0
         else:
             tail = "  br label %D\nD:\n  ret ptr %mem\n"
         defs.append(f"""declare dso_local ptr @__remill_write_memory_{suf}_slow(ptr noundef, i32 noundef, {ty} noundef)
@@ -618,10 +678,7 @@ entry:
   %slow = or i1 %s1, %str
   br i1 %slow, label %S, label %F
 F:
-  %w = load i64, ptr @g_guest_writes, align 8
-  %w1 = add i64 %w, 1
-  store i64 %w1, ptr @g_guest_writes, align 8
-  %b = load ptr, ptr @bo2_g_base, align 8
+{_count_guest_writes(1)}  %b = load ptr, ptr @bo2_g_base, align 8
   %bi = ptrtoint ptr %b to i64
   %az = zext i32 %a to i64
   %pi = add i64 %bi, %az
@@ -676,7 +733,9 @@ def _inline_guest_wide(ir_text):
             "@bo2_w8_cold = external global i32",
             "@bo2_w64_cold = external global i32",
             "@bo2_w32_slow_map = external global ptr",
-            "@g_guest_writes = external global i64"]
+            "@g_guest_writes = external global i64",
+            "@g_any_hosted = external global i8",
+            "@bo2_sched_tp = external global i64"]
     n = 0
     addr = """  %b = load ptr, ptr @bo2_g_base, align 8
   %bi = ptrtoint ptr %b to i64
@@ -707,10 +766,7 @@ entry:
   %s1 = or i1 %cnz, %gnz
 {page}  br i1 %slow, label %S, label %F
 F:
-  %w = load i64, ptr @g_guest_writes, align 8
-  %w1 = add i64 %w, {inc}
-  store i64 %w1, ptr @g_guest_writes, align 8
-{addr}  store volatile {ty} %v, ptr %p, align 1
+{_count_guest_writes(inc)}{addr}  store volatile {ty} %v, ptr %p, align 1
   ret ptr %mem
 S:
   %r = call ptr {nom}_slow(ptr %mem, i32 %a, {ty} %v)
@@ -777,7 +833,10 @@ entry:
   %sauv = icmp uge i32 %e, 4293853184
   %t = icmp eq i32 %addr, 8926272
   %s1 = or i1 %kn, %sauv
-  %slow = or i1 %s1, %t
+  %img0 = add i32 %addr, -4194304
+  %horsimg = icmp uge i32 %img0, 66830336
+  %s2 = or i1 %s1, %horsimg
+  %slow = or i1 %s2, %t
   %x = call i1 @llvm.expect.i1(i1 %slow, i1 false)
   br i1 %x, label %S, label %F
 F:
@@ -1469,7 +1528,7 @@ def main():
     # well-formed.)
     stub_ll = os.path.join(workdir, "stubs.ll")
     with open(stub_ll, "w") as f:
-        f.write('target triple = "arm64-apple-macosx18.0.0"\n')
+        f.write(f'target triple = "{_ARM64_TRIPLE}"\n')
         f.write('declare void @__stub_call_fatal(i32)\n')
         for va_hex in sorted(undefined):
             va_int = int(va_hex, 16)
@@ -1534,21 +1593,21 @@ def main():
         units = batch_bcs + [stub_bc]
         objs = [u[:-3] + ".o" for u in units]
         def _cc(pair):
-            return subprocess.run([LLVM17 + "/bin/clang", "-arch", "arm64", "-c", opt, "-x", "ir",
+            return subprocess.run([LLVM17 + "/bin/clang", *CLANG_TARGET, "-c", opt, "-x", "ir",
                                    "-o", pair[1], pair[0]], capture_output=True, text=True,
                                   timeout=int(os.environ.get("BOOT_COMPILE_TIMEOUT", "900")))
         with ThreadPoolExecutor(max_workers=args.jobs) as ex:
             results = list(ex.map(_cc, zip(units, objs)))
         r = next((x for x in results if x.returncode != 0), results[-1])
         if r.returncode == 0:
-            r = subprocess.run([LLVM17 + "/bin/clang", "-arch", "arm64", "-r", "-nostdlib", "-o", lifted_o] + objs,
+            r = subprocess.run([LLVM17 + "/bin/clang", *CLANG_TARGET, "-r", "-nostdlib", "-o", lifted_o] + objs,
                                capture_output=True, text=True, timeout=600)
         for o in objs:
             if os.path.exists(o):
                 os.remove(o)
         print(f"  {len(units)} lots compiles separement, joints par ld -r")
     else:
-        r = subprocess.run([LLVM17 + "/bin/clang", "-arch", "arm64", "-c", opt,
+        r = subprocess.run([LLVM17 + "/bin/clang", *CLANG_TARGET, "-c", opt,
                             "-x", "ir", "-o", lifted_o, linked_bc],
                            capture_output=True, text=True,
                            timeout=int(os.environ.get("BOOT_COMPILE_TIMEOUT", "900")))
@@ -1561,6 +1620,54 @@ def main():
     with open(os.path.join(workdir, "bc_files.txt"), "w") as f:   # pour BOOT_RELINK_ONLY
         f.write("".join(b + "\n" for b in bc_files))
     return _finish_build(args, workdir, lifted_o, bc_files, locals().get("start", time.time()))
+
+
+def _android_outputs(workdir, lifted_o, main_src, stub_cpp, sections_bin):
+    """BO2_ANDROID=1: what the Android build links, in <workdir>/android/ (Bo2-APK scripts/lift-android.sh).
+
+    lifted.o (aarch64-linux-android33), main.cpp turned into bo2_game_main() (the shell calls it; the PE sections'
+    path comes from BO2_PE_SECTIONS; the shell's log.cpp keeps the crash handlers), the interpose stubs, the PE
+    sections (game code: they go with the player's data, never into the APK), and the two symbol lists the macOS link
+    applies by patching the binary: the redirects (lifted function -> native body) and the runtime's substitutions.
+    """
+    import shutil
+    out = os.path.join(workdir, "android")
+    os.makedirs(out, exist_ok=True)
+    host = open(main_src).read()
+    for old, new in (
+        ("int main(int argc,char** argv) {", 'extern "C" int bo2_game_main(int argc,char** argv) {'),
+        ("    signal(SIGSEGV,crash_handler); signal(SIGABRT,crash_handler); signal(SIGBUS,crash_handler);\n", ""),
+        # (the C strings' "\n" is a backslash and an n in main.cpp: "\\n" here)
+        ('    if(argc<2){fprintf(stderr,"Usage: %s <pe_sections.bin>\\n",argv[0]);return 1;}\n'
+         '    fprintf(stderr,"[BOOT] loading PE sections...\\n"); load_pe_sections(argv[1]);',
+         '    const char* pe=getenv("BO2_PE_SECTIONS"); if(!pe&&argc>1) pe=argv[1];\n'
+         '    if(!pe){fprintf(stderr,"[BOOT] BO2_PE_SECTIONS is not set\\n");return 1;}\n'
+         '    fprintf(stderr,"[BOOT] loading PE sections from %s...\\n",pe); load_pe_sections(pe);'),
+    ):
+        if old not in host:
+            raise SystemExit(f"BO2_ANDROID: main.cpp no longer has: {old[:60]!r}")
+        host = host.replace(old, new)
+    host = host.replace("static void crash_handler(int sig) {", "[[maybe_unused]] static void crash_handler(int sig) {")
+    with open(os.path.join(out, "main.cpp"), "w") as f:
+        f.write(host)
+    shutil.copy(stub_cpp, os.path.join(out, "interpose_stubs.cpp"))
+    shutil.copy(sections_bin, os.path.join(out, "pe_sections.bin"))
+    if lifted_o and os.path.exists(lifted_o):
+        shutil.copy(lifted_o, os.path.join(out, "lifted.o"))
+    red = []
+    LJ = _T.get("longjmp")
+    if LJ is not None:
+        red.append((LJ, "bo2_longjmp"))
+    red += [(va, name.lstrip("_")) for va, name in _T.get("redirects", {}).items()]
+    with open(os.path.join(out, "redirects.txt"), "w") as f:
+        for va, name in red:
+            f.write(f"sub_{va:x} {name}\n")
+    with open(os.path.join(out, "shim_defined.txt"), "w") as f:
+        for va in sorted(SHIM_DEFINED):
+            f.write(f"sub_{va:x}\n")
+    print(f"BO2_ANDROID: {out}: main.cpp (bo2_game_main), interpose_stubs.cpp, pe_sections.bin, "
+          f"{len(red)} redirects, {len(SHIM_DEFINED)} intended substitutions" + (", lifted.o" if lifted_o else ""))
+    return True
 
 
 def _finish_build(args, workdir, lifted_o, bc_files, start):
@@ -1614,14 +1721,15 @@ def _finish_build(args, workdir, lifted_o, bc_files, start):
                     f'    std::abort();\n}}\n')
     print(f"  generated {len(syms)} t6sp interpose stubs for the link")
     ro_stub = os.path.join(workdir, "t6sp_interpose_stubs.o")
-    rs = subprocess.run([LLVM17 + "/bin/clang++", "-arch", "arm64", "-c", "-O1",
-                         "-std=c++17", "-o", ro_stub, stub_cpp],
-                        capture_output=True, text=True, timeout=600)
-    if rs.returncode != 0:
-        print("  FATAL: interpose stubs did not compile:")
-        print("   ", (rs.stderr or "").strip()[:800])
-        return
-    shim_objs.append(ro_stub)
+    if not ANDROID:   # BO2_ANDROID: compiled by the Android build (scripts/lift-android.sh)
+        rs = subprocess.run([LLVM17 + "/bin/clang++", "-arch", "arm64", "-c", "-O1",
+                             "-std=c++17", "-o", ro_stub, stub_cpp],
+                            capture_output=True, text=True, timeout=600)
+        if rs.returncode != 0:
+            print("  FATAL: interpose stubs did not compile:")
+            print("   ", (rs.stderr or "").strip()[:800])
+            return
+        shim_objs.append(ro_stub)
     # ⚠️ THE AUDIO OBJECT IS NOT OPTIONAL AT LINK TIME. remaining_dlls_impl.cpp's
     # sound sampler references bo2_audio_counters / _peak / _peaks /
     # _set_format, which live in runtime/audio/coreaudio_out.cpp. Without it the
@@ -1635,7 +1743,7 @@ def _finish_build(args, workdir, lifted_o, bc_files, start):
     # Liste du runtime : bo2_replay.cpp (journal de rejeu) et pad_gc.mm
     # (manette) y sont entres plus tard, d'ou « Undefined symbols _bo2_journal_* ».
     # BOOT_STOP_AT_BC : seul main.cpp sert.
-    for rf in [] if os.environ.get("BOOT_STOP_AT_BC") else ["win32_runtime.cpp", "kernel32_impl.cpp", "user32_impl.cpp",
+    for rf in [] if (os.environ.get("BOOT_STOP_AT_BC") or ANDROID) else ["win32_runtime.cpp", "kernel32_impl.cpp", "user32_impl.cpp",
                "remaining_dlls_impl.cpp", "bo2_replay.cpp", "heap_code.cpp", "../audio/coreaudio_out.cpp",
                "../gfx/dxbc_to_msl.cpp", "../video/vpx_native.cpp",
                "../gfx/metal_backend.mm", "../input/pad_gc.mm", "x86_guest_vm.cpp", "interp.cpp"] + (
@@ -1873,6 +1981,9 @@ int main(int argc,char** argv) {
         _host = (_host.replace("{ENTRY_VA}", hex(ENTRY_VA))
                       .replace('{_T["exe"]}', _T["exe"]))
         with open(main_src, "w") as _fh: _fh.write(_host)
+
+    if ANDROID:
+        return _android_outputs(workdir, lifted_o, main_src, stub_cpp, sections_bin)
 
     if os.environ.get("BOOT_STOP_AT_BC"):
         print(f"BOOT_STOP_AT_BC : linked.bc et {main_src} prets, arret avant la compilation de lifted.o")

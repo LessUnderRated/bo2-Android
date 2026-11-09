@@ -42,17 +42,18 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <pthread.h>
-#include <pthread/qos.h>
-#include <dispatch/dispatch.h>   // C25 : semaphore de reveil des fils heberges
+#include "bo2_platform.h"       // QoS, semaphores (C25), contextes, pointeur de fil : Darwin ou Android
 #include <time.h>
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
+#if defined(__APPLE__)
 #include <malloc/malloc.h>
 #include <mach/mach.h>          // P795 : [FILS-CPU], temps CPU par fil
 #include <mach/mach_vm.h>       // Z-NATIF-23b : [A-COUP-FIL], pile hote d'un autre fil
 #include <mach/mach_time.h>
 #include <libproc.h>
+#endif
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
@@ -166,9 +167,7 @@ bool g_any_hosted BO2_HOT_LINE = false;
 // test replie est `<= 0` signe.
 extern "C" { uint64_t bo2_sched_tp BO2_HOT_LINE = 0; }
 static inline uint64_t bo2_read_tp() {
-    uint64_t v;
-    __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(v));
-    return v;
+    return bo2_read_thread_pointer();   // tpidrro_el0 sur Darwin, tpidr_el0 sur Android (bo2_platform.h)
 }
 
 // 🎯 C31 (P673) — LE FIL ORDONNANCEUR SE RECONNAIT SANS TLS. Il garde t_host_tid = -1 (seul
@@ -1143,7 +1142,12 @@ extern "C" uint64_t g_pick_count[32] = {};
 // bruit de n'importe quel bras A/B de ce depot.
 extern "C" uint64_t g_hold_ns[32] = {};
 static uint64_t g_last_switch_ns = 0;
+// Android: a diagnostic only (the [FILS] report reads it), and the clock read on every switch showed in the main
+// thread's profile on the S26. Off unless BO2_HOLD_NS=1.
+static int g_hold_on = -1;
 static inline void sched_charge(int prev) {
+    if (__builtin_expect(g_hold_on < 0, 0)) g_hold_on = bo2_env_on("BO2_HOLD_NS") ? 1 : 0;
+    if (__builtin_expect(g_hold_on == 0, 1)) return;
     const uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
     // Le tout premier appel n'a rien a facturer : il amorce seulement l'horloge.
     if (g_last_switch_ns && prev >= 0 && prev < 32) g_hold_ns[prev] += now - g_last_switch_ns;
@@ -1236,6 +1240,11 @@ static bool gsc_tls_on() {
 uint64_t g_gsc_switch_total, g_gsc_switch_in_window[2];
 static void gsc_scratch_save(GThread* t) {
     if (!t) return;
+#if defined(__ANDROID__)
+    // Android : le comptage ci-dessous (deux lectures invitees par bascule) n'est qu'un temoin ; il pesait 2,2 % du
+    // fil ordonnanceur sur le S26. BO2_GSC_TLS=1 (le seul usage de ces compteurs) le remet.
+    if (!gsc_tls_on()) return;
+#endif
     ++g_gsc_switch_total;
     if (win32_mem_read32(0x2f3b8e0u))          ++g_gsc_switch_in_window[0];
     if (win32_mem_read32(0x2f3b8e0u + 0x42a8u)) ++g_gsc_switch_in_window[1];
@@ -1293,6 +1302,7 @@ extern "C" void bo2_hostyield_report() {
     }
 }
 
+#if defined(__APPLE__)   // [FILS-CPU] et [A-COUP] lisent les fils par Mach ; sur Android, voir le #else plus bas
 // ── 🎯 [FILS-CPU] (P795) — QUI CONSOMME LES COEURS, FIL PAR FIL ─────────────
 // `sample` compte aussi un fil qui attend son tour (swtch_pri, semaphore) : p788 met 816
 // echantillons sur 1 679 dans le yield de host_backoff sans dire si le coeur brulait. Ici,
@@ -1479,6 +1489,19 @@ void* acoup_veilleur(void* arg) {
     return nullptr;
 }
 }   // namespace
+#else   // Android : pas de Mach (task_threads, thread_suspend, mach_vm_read). Les deux temoins se taisent, et le disent.
+extern "C" void bo2_filscpu_report() {
+    static bool dit = false;
+    if (!dit) { dit = true; fprintf(stderr, "[FILS-CPU] indisponible sur Android (lit les fils par Mach)\n"); }
+}
+static std::atomic<uint64_t> g_pompe_passes{0};         // boucle de pompe, win32_run_main
+namespace {
+void* acoup_veilleur(void*) {
+    fprintf(stderr, "[A-COUP] BO2_ACOUP_MS ignore : indisponible sur Android (suspend les fils par Mach)\n");
+    return nullptr;
+}
+}   // namespace
+#endif
 
 // ── 🎯 LA RECULADE GRADUEE D'UN FIL HOTE ────────────────────────────────────
 //
@@ -1897,7 +1920,15 @@ extern "C" void win32_thread_import_tick() {
 // garantie de l'exclusion mutuelle. Et le callback de shim emprunte le State de
 // la coroutine courante.
 extern "C" int bo2_hwa_defer_yield(int kind);   // win32_runtime.cpp (P645)
+#if defined(__ANDROID__)
+extern "C" volatile uint32_t bo2_preempt_now;   // win32_runtime.cpp: raised by the time-slice timer
+#endif
 extern "C" void win32_thread_write_tick() {
+#if defined(__ANDROID__)
+    // Callers test the flag and the scheduler thread first; lower it here, once per slice, whatever happens below
+    // (a refusal waits for the next slice, as the write countdown's reset did).
+    __atomic_store_n(&bo2_preempt_now, 0u, __ATOMIC_RELAXED);
+#endif
     if (in_shim_cb()) { if (g_cur >= 0 && g_cur < 64) ++g_preempt_w_rcb[g_cur]; return; }
     const bool under_lock = (g_cur >= 0 && g_cur < 64 && g_cs_depth[g_cur] > 0);
     // Compte INCONDITIONNELLEMENT, comme g_imp_under_lock : « quelle fraction
@@ -1953,8 +1984,41 @@ extern "C" uint64_t    g_yield_count[32] = {};
 // is the only way to find who is supposed to signal it.
 extern "C" uint32_t    g_yield_handle[32] = {};
 extern "C" const char* g_yield_last[32]  = {};
+// Android — UN SONDEUR SANS PROGRES N'INTERDIT PAS LE REPOS. Sur le S26, au menu, le fil ordonnanceur restait a un
+// cœur plein : des coroutines « RUN sans echeance » qui ne font que sonder (Sleep(0), WFSO non signale, TryCS)
+// refusaient le repos des millions de fois ([ORDO-REPOS refus #67108864]). Une coroutine dont la cession est un
+// sondage, et qui n'a ecrit aucun octet invite depuis son sondage precedent (son compte d'ecritures, State+2760,
+// tenu par le code leve), n'a rien fait : apres deux sondages vides de suite, ordo_repos_si_inactif l'ignore. Tout
+// ce qu'elle attend la reveille de toute facon (un SetEvent d'un fil heberge reveille l'ordonnanceur) et le repos
+// est borne a 1 ms. BO2_ORDO_SONDE=0 rend l'ancien comportement.
+static uint64_t g_poll_writes[32];
+static uint32_t g_poll_idle[32];
+static bool poll_reason(const char* why) {
+    return !strcmp(why, "Sleep") || !strncmp(why, "WFSO", 4) || !strcmp(why, "TryCS") || !strcmp(why, "CS-wait");
+}
+static bool ordo_sonde_on() {
+#if defined(__ANDROID__)
+    static const bool on = bo2_env_on("BO2_ORDO_SONDE", true);
+    return on;
+#else
+    return false;
+#endif
+}
 static void coop_yield_from(const char* why) {
-    if (g_cur >= 0 && g_cur < 32) { g_yield_count[g_cur]++; g_yield_last[g_cur] = why; }
+    if (g_cur >= 0 && g_cur < 32) {
+        g_yield_count[g_cur]++; g_yield_last[g_cur] = why;
+        if (ordo_sonde_on()) {
+            const GThread* t = g_threads[g_cur];
+            uint64_t w = 0;
+            if (t && t->cur_state) memcpy(&w, reinterpret_cast<const uint8_t*>(t->cur_state) + 2760, sizeof w);
+            if (poll_reason(why) && w == g_poll_writes[g_cur]) {
+                if (g_poll_idle[g_cur] < 0xffffffffu) ++g_poll_idle[g_cur];
+            } else {
+                g_poll_idle[g_cur] = 0;
+            }
+            g_poll_writes[g_cur] = w;
+        }
+    }
     coop_yield();
 }
 // 🎯 ATTENDRE JUSQU'A UNE ECHEANCE, quand on la connait — P602, 2026-09-20.
@@ -1992,11 +2056,28 @@ static void coop_yield_until(const char* why, uint64_t deadline_ns) {
 // lui-meme des taches, pendant que les 5 ouvriers dorment 35 % du temps.
 // On garde la tranche de 500 us, qui reste le filet de securite de tout signaleur
 // qui ne passe pas par ici ; une attente n'est donc jamais plus longue qu'avant.
+// Android (S26, jq heberges) : la tranche de 500 us n'a plus de raison d'etre pour un evenement. SetEvent et
+// PulseEvent reveillent tout attendeur heberge par son semaphore (host_wake, ci-dessous), et un semaphore compte :
+// un signal donne avant l'attente n'est pas perdu. Le seul autre signaleur (BO2_ORPHAN_SIGNAL) est un diagnostic.
+// Mesure (run hosted jq, 10:53) : ~14 700 parcages/s pour 5 ouvriers inactifs, 85 % finis par la tranche et non par
+// un signal ; chaque reveil les tire d'un sommeil profond. L'ouvrier jq attend WFSO(evt, 1 ms) en boucle (0x9b0450,
+// le pousseur fait PulseEvent a chaque tache) : on dort jusqu'a l'echeance, comme Windows apres timeBeginPeriod(1)
+// que le jeu appelle. Sans echeance (attente infinie), la tranche passe a 2 ms. BO2_HOST_PARK_US=500 rend l'ancien
+// comportement (plafond de tranche, en microsecondes ; 0 = pas de plafond pour une echeance finie).
+static uint64_t host_park_cap_ns(bool fini) {
+    static const long us = [] {
+        const char* e = bo2_getenv("BO2_HOST_PARK_US");
+        return e ? atol(e) : -1L;
+    }();
+    if (us > 0) return (uint64_t)us * 1000ull;
+    return fini ? ~0ull : 2000000ull;
+}
 static std::atomic<uint64_t> g_c25_park{0}, g_c25_reveil{0};
 static void host_park_until(GThread* me, uint64_t deadline_ns, const char* why) {
     const uint64_t now = bo2_mono_ns();
     uint64_t reste = (deadline_ns > now) ? deadline_ns - now : 0;
-    if (!deadline_ns || reste > 500000ull) reste = 500000ull;
+    const uint64_t cap = host_park_cap_ns(deadline_ns != 0);
+    if (!deadline_ns || reste > cap) reste = deadline_ns ? cap : host_park_cap_ns(false);
     if (reste) {
         const long rc = dispatch_semaphore_wait(me->hsem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)reste));
         const uint64_t k = g_c25_park.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -2057,7 +2138,9 @@ static void ordo_repos_si_inactif(const GThread* me, uint64_t deadline, const ch
         const GThread* t = g_threads[i];
         if (t == me || t->hosted) continue;
         const int st = __atomic_load_n(&t->status, __ATOMIC_RELAXED);
-        const uint64_t w = st == T_RUN ? ((cs_attend && i < 64 && g_cs_waiting_for[i]) ? ~0ull : t->sleep_until_ns)
+        const bool sondeur_vide = ordo_sonde_on() && i < 32 && g_poll_idle[i] >= 2;   // voir coop_yield_from
+        const uint64_t w = st == T_RUN ? (((cs_attend && i < 64 && g_cs_waiting_for[i]) || sondeur_vide) ? ~0ull
+                                                                                                   : t->sleep_until_ns)
                          : (st == T_BLOCKED && t->wake_at) ? t->wfso_until_ns : ~0ull;
         if (!w) {   // qui interdit le repos (Z-NATIF-14y) ; fil ordonnanceur seul, donc compteurs simples
             static uint64_t n_refus[32] = {};
@@ -3438,7 +3521,7 @@ static std::atomic<int>  g_spin_n{-1};
 static_assert(std::atomic<int>::is_always_lock_free && std::atomic<void*>::is_always_lock_free, "signal publication must be lock-free");
 static void spin_sigprof(int, siginfo_t*, void* context) {
     auto* uc = static_cast<ucontext_t*>(context);
-    g_spin_pc.store(reinterpret_cast<void*>(uc->uc_mcontext->__ss.__pc),
+    g_spin_pc.store(reinterpret_cast<void*>(BO2_UC_PC(uc)),
                     std::memory_order_relaxed);
     g_spin_n.store(1, std::memory_order_release);
 }
@@ -3725,6 +3808,9 @@ extern "C" void win32_name_the_spin(const char* why) {
 }
 
 static void qos_note(const char* qui, int idx, bool demander_ui);   // P654/C9, plus bas
+#if defined(__ANDROID__)
+extern "C" void bo2_perf_register_thread(int role) __attribute__((weak));   // Bo2-APK adpf.cpp (ADPF)
+#endif
 // P995 : gfx_register_* jette tout tant que la fenetre n'est pas ouverte. L'invite Steam, sans les traces de
 // un autre build, cree ses nuanceurs et ses cibles avant elle : monde noir, 27 pipelines. Il attend donc la fenetre.
 static std::atomic<bool> g_fenetre_tranchee{false};
@@ -3737,6 +3823,9 @@ static void* win32_main_thread_runner(void* p) {
     pthread_setname_np("bo2_ordonnanceur");   // P795 : [FILS-CPU]
     g_sched_thread_valid.store(true, std::memory_order_release);
     qos_note("ordonnanceur", 0, bo2_env_on("BO2_QOS"));
+#if defined(__ANDROID__)
+    if (bo2_perf_register_thread) bo2_perf_register_thread(0);   // ADPF : la boucle principale du jeu
+#endif
     auto* a = (MainRunArgs*)p;
     win32_run_main_thread_impl(a->st, a->entry);
     g_guest_finished.store(true, std::memory_order_release);
@@ -3792,7 +3881,9 @@ extern "C" void win32_run_main_thread(State* st, uint32_t entry) {
                 return (unsigned)(v > 0 ? v : 1);
             }();
             if (const char* e = bo2_getenv("BO2_ACOUP_MS"); e && atoi(e) > 0) {   // [A-COUP] : le veilleur, plus haut
+#if defined(__APPLE__)
                 g_pompe_port = pthread_mach_thread_np(pthread_self());
+#endif
                 pthread_t v;
                 if (pthread_create(&v, nullptr, acoup_veilleur, (void*)(intptr_t)atoi(e)) == 0) pthread_detach(v);
             }
@@ -3897,6 +3988,15 @@ static void* host_thread_entry(void* arg) {
     // USER_INTERACTIVE : sous Windows ces fils passent devant les autres ; ici c'est la classe qui donne un coeur P.
     // Les deux par defaut depuis P803 (starved 908-1872 -> 7-71, img/s 34,6 -> 34,0, monde 0,99x) ; =0 pour retirer.
     const GThread* g = g_threads[t_host_tid];
+#if defined(__ANDROID__)
+    // ADPF (Bo2-APK android/native/src/adpf.cpp) : les fils de l'image (backend D3D, serveur, ouvriers jq) rejoignent
+    // la session d'indications de performance, qui donne au gouverneur l'echeance de l'image. Le son n'y est pas.
+    {
+        const int role = g->proc == kJqWorker ? 3 : (g->proc == kThreadMain && g->param == 0x01u) ? 1
+                       : (g->proc == kThreadMain && g->param == 0x0au) ? 2 : -1;
+        if (role >= 0 && bo2_perf_register_thread) bo2_perf_register_thread(role);
+    }
+#endif
     qos_note("fil heberge", t_host_tid,
              (g->proc == kThreadMain && g->param == 0x0au && bo2_env_on("BO2_QOS_SRV", true))
              || (g->prio >= 2 && bo2_env_on("BO2_PRIO_QOS", true)));
@@ -5306,7 +5406,7 @@ static void impl_GetFileTime(State& s) {
         win32_stdcall_ret(s, 4);
         return;
     }
-    const timespec t[3] = {st.st_birthtimespec, st.st_atimespec, st.st_mtimespec};
+    const timespec t[3] = {BO2_ST_BIRTHTIM(st), BO2_ST_ATIM(st), BO2_ST_MTIM(st)};
     for (unsigned i = 0; i < 3; ++i) {
         const uint32_t out = win32_arg(s, 1 + i);
         if (!out) continue;
@@ -6030,9 +6130,17 @@ static uint32_t guest_write_cstr(uint32_t addr, const char* s) {
     win32_mem_write8(addr + i, 0);
     return addr;
 }
+// BO2_CMDLINE_EXTRA : ajoute apres le nom de l'exe (des `+set dvar valeur`, que le moteur applique AVANT ses
+// sous-systemes, donc avant l'init du son). Android le pose a `+set snd_speakerConfiguration Stereo` : le mixeur du
+// jeu mixait en 5.1 (6 canaux, reverberation comprise) pour deux haut-parleurs.
 static void impl_GetCommandLineA(State& s) {
     static uint32_t p = 0;
-    if (!p) p = guest_write_cstr(GUEST_SCRATCH, "t6sp.exe");
+    if (!p) {
+        std::string cl = "t6sp.exe";
+        if (const char* x = bo2_getenv("BO2_CMDLINE_EXTRA"); x && *x && strlen(x) < 1024) { cl += ' '; cl += x; }
+        p = guest_write_cstr(GUEST_SCRATCH, cl.c_str());
+        fprintf(stderr, "[CMDLINE] %s\n", cl.c_str());
+    }
     s.gpr.rax.dword = p;
     win32_stdcall_ret(s, 0);
 }
@@ -6601,11 +6709,22 @@ static void spin_yield_check(uint32_t target) {
 // bloquerait le fil heberge jusqu'au retour de la coroutine.
 extern "C" void* __remill_atomic_begin(void* mem);
 extern "C" void* __remill_atomic_end(void* mem);
+#if defined(__ANDROID__)
+// Android : la rayure de l'adresse cible, comme les sequences du code leve (win32_runtime.cpp, rayures).
+extern "C" void bo2_atomic_lock_at(uint32_t a);
+extern "C" void* bo2_atomic_end_at(void* mem);
 struct IlkSeq {
     const bool on;
-    IlkSeq() : on(__builtin_expect(g_any_hosted, 0)) { if (on) __remill_atomic_begin(nullptr); }
+    explicit IlkSeq(uint32_t a) : on(__builtin_expect(g_any_hosted, 0)) { if (on) bo2_atomic_lock_at(a); }
+    ~IlkSeq() { if (on) bo2_atomic_end_at(nullptr); }
+};
+#else
+struct IlkSeq {
+    const bool on;
+    explicit IlkSeq(uint32_t) : on(__builtin_expect(g_any_hosted, 0)) { if (on) __remill_atomic_begin(nullptr); }
     ~IlkSeq() { if (on) __remill_atomic_end(nullptr); }
 };
+#endif
 // 🎯 C24 (2026-09-26) — InterlockedExchange SUR UN LOCAL DE L'APPELANT N'EST QU'UNE BARRIERE.
 // La file de taches sans verrou (0x8fc240, 0x8fc330, 0x8f9f20, 0x8fba37) appelle
 // InterlockedExchange(&local, 0) a chaque tour : c'est MemoryBarrier() des vieux SDK.
@@ -6648,7 +6767,7 @@ static void impl_InterlockedExchange(State& s) {          // (Target, Value)
         s.gpr.rax.dword = __atomic_exchange_n(c33_mot(t), v, __ATOMIC_SEQ_CST);
         bo2_c33_fermer(d);
         ++g_guest_writes;
-    } else { IlkSeq q;
+    } else { IlkSeq q(t);
       s.gpr.rax.dword = win32_mem_read32(t);
       win32_mem_write32(t, v); }
     spin_yield_check(t);
@@ -6660,7 +6779,7 @@ static void impl_InterlockedIncrement(State& s) {         // (Addend) -> new val
         v = __atomic_add_fetch(c33_mot(a), 1u, __ATOMIC_SEQ_CST);
         bo2_c33_fermer(d);
         ++g_guest_writes;
-    } else { IlkSeq q; v = win32_mem_read32(a) + 1; win32_mem_write32(a, v); }
+    } else { IlkSeq q(a); v = win32_mem_read32(a) + 1; win32_mem_write32(a, v); }
     s.gpr.rax.dword = v;
     win32_stdcall_ret(s, 1);
 }
@@ -6670,7 +6789,7 @@ static void impl_InterlockedDecrement(State& s) {         // (Addend) -> new val
         v = __atomic_sub_fetch(c33_mot(a), 1u, __ATOMIC_SEQ_CST);
         bo2_c33_fermer(d);
         ++g_guest_writes;
-    } else { IlkSeq q; v = win32_mem_read32(a) - 1; win32_mem_write32(a, v); }
+    } else { IlkSeq q(a); v = win32_mem_read32(a) - 1; win32_mem_write32(a, v); }
     s.gpr.rax.dword = v;
     win32_stdcall_ret(s, 1);
 }
@@ -6682,7 +6801,7 @@ static void impl_InterlockedCompareExchange(State& s) {   // (Destination, Excha
         const bool ok = __atomic_compare_exchange_n(c33_mot(d), &old, x, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
         bo2_c33_fermer(fl);
         if (ok) ++g_guest_writes;
-    } else { IlkSeq q; old = win32_mem_read32(d); if (old == c) win32_mem_write32(d, x); }
+    } else { IlkSeq q(d); old = win32_mem_read32(d); if (old == c) win32_mem_write32(d, x); }
     s.gpr.rax.dword = old;
     if (old != c) spin_yield_check(d);   // failed CAS: this is a spin-acquire
     win32_stdcall_ret(s, 3);
@@ -6694,7 +6813,7 @@ static void impl_InterlockedExchangeAdd(State& s) {       // (Addend, Value) -> 
         old = __atomic_fetch_add(c33_mot(a), v, __ATOMIC_SEQ_CST);
         bo2_c33_fermer(d);
         ++g_guest_writes;
-    } else { IlkSeq q; old = win32_mem_read32(a); win32_mem_write32(a, old + v); }
+    } else { IlkSeq q(a); old = win32_mem_read32(a); win32_mem_write32(a, old + v); }
     s.gpr.rax.dword = old;
     win32_stdcall_ret(s, 2);
 }       // NOTE: real arity is 2 — still mismatched, not in the CRT-path batch

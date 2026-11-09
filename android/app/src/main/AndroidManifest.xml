@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    android:installLocation="auto">
+
+    <!-- DXVK (the planned Direct3D 11 to Vulkan layer) needs Vulkan 1.3. -->
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x403000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- The run's log to bo2-logd on the developer's PC (remote_log.cpp), when the build names one. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- New builds from the same PC (Updater.java), installed after the player confirms. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- allowNativeHeapPointerTagging: the recompiled game keeps addresses in 32-bit ints, in its own
+         4 GiB guest mapping. Heap pointers that carry a tag in their top byte (Android 11 and later)
+         must never reach it, so they are untagged, as on a PC. The same setting Chronicle-rs needs
+         for PS2 code. largeHeap: the game's own heap is native, but the Java side copies data in. -->
+    <application
+        android:name=".Bo2App"
+        android:label="@string/app_name"
+        android:icon="@drawable/ic_launcher"
+        android:allowBackup="false"
+        android:appCategory="game"
+        android:isGame="true"
+        android:theme="@style/AppTheme"
+        android:enableOnBackInvokedCallback="false"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true"
+        android:allowNativeHeapPointerTagging="false"
+        android:networkSecurityConfig="@xml/network_security_config">
+
+        <!-- Shows the device report, imports the player's own Black Ops II files the first time,
+             then opens the game. -->
+        <activity
+            android:name=".SetupActivity"
+            android:label="@string/app_name"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".Bo2Activity"
+            android:label="@string/app_name"
+            android:alwaysRetainTaskState="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="sensorLandscape"
+            android:resizeableActivity="false"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:preferMinimalPostProcessing="true"
+            android:exported="false" />
+
+        <!-- The package installer's answer to an update (Updater.java). -->
+        <receiver android:name=".Updater$InstallResult" android:exported="false" />
+
+        <!-- The app's files (game/, logs/) in the system's Files app. -->
+        <provider
+            android:name=".Bo2DocumentsProvider"
+            android:authorities="${documentsAuthority}"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+    </application>
+</manifest>

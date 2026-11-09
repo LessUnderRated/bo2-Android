@@ -30,7 +30,14 @@
 // demande de refaire lifted.o (le compteur est replie dans l'IR).
 #pragma once
 
-#define BO2_HOT_LINE __attribute__((section("__DATA,__bo2_hot"), aligned(128)))
+// Mach-O names a section "segment,section"; on ELF it is one name (clang quotes the Mach-O form for ELF, GCC does
+// not, and GNU as rejects it).
+#if defined(__APPLE__)
+#define BO2_HOT_SECTION "__DATA,__bo2_hot"
+#else
+#define BO2_HOT_SECTION ".data.bo2_hot"
+#endif
+#define BO2_HOT_LINE __attribute__((section(BO2_HOT_SECTION), aligned(128)))
 #define BO2_HOT_PAD(tag)                                                        \
-    __attribute__((used, section("__DATA,__bo2_hot"), aligned(128)))            \
+    __attribute__((used, section(BO2_HOT_SECTION), aligned(128)))               \
     static char bo2_hot_pad_##tag[128]

@@ -176,6 +176,10 @@ extern "C" bool g_wr_hist_on;              // C18 : BO2_WR_HIST=1
 // Caveat a garder en tete en lisant rss= : c'est le processus ENTIER (hote +
 // arene invitee + Metal), pas l'invite seul. Ce qui se lit est la PENTE, pas
 // la valeur absolue.
+#include "bo2_platform.h"
+#if !defined(__APPLE__)
+extern "C" uint64_t win32_host_rss_mb() { return bo2_host_rss_mb(); }   // /proc/self/statm
+#else
 #include <mach/mach.h>
 extern "C" uint64_t win32_host_rss_mb() {
     mach_task_basic_info_data_t info;
@@ -184,6 +188,7 @@ extern "C" uint64_t win32_host_rss_mb() {
                   (task_info_t)&info, &count) != KERN_SUCCESS) return 0;
     return (uint64_t)info.resident_size >> 20;
 }
+#endif
 
 extern "C" {
 
@@ -1350,8 +1355,14 @@ static pthread_key_t g_c33_cle;
 // Avant tout code invite. Une cle nulle rendrait `tsd + 0` = le pointeur du fil lui-meme : on coupe alors C33.
 // Priorite 101 : avant w32_fast_init (102), qui imprime [C33].
 __attribute__((constructor(101))) static void c33_cle_init() {
+#if BO2_HAS_DARWIN_TSD
     if (pthread_key_create(&g_c33_cle, nullptr) == 0 && g_c33_cle != 0) bo2_c33_tsd_off = 8ull * g_c33_cle;
     else bo2_c33_off = 1;
+#else
+    // Android : les donnees d'une cle pthread ne sont pas a *(tpidr_el0 + 8 * cle) dans bionic. C33 est coupe, comme
+    // BO2_C33=0 sur Mac : toutes les sequences `lock` prennent le chemin herite, sous le verrou global.
+    bo2_c33_off = 1;
+#endif
 }
 // 🎯 ONE WORD INSTEAD OF TEN LOADS — the write barrier's whole prologue, precomputed.
 //
@@ -13850,8 +13861,8 @@ static void bo2_hw_capture(HwHit& h, uint32_t va, void* ucv) {   // async-signal
     h.va = va; h.tid = (uint32_t)win32_current_tid(); h.guest_ret = g_last_ret_pc;
     memcpy(&h.val_before, g_base + g_hw_va, 4);
     if (ucontext_t* uc = (ucontext_t*)ucv) {
-        h.pc = uc->uc_mcontext->__ss.__pc; h.lr = uc->uc_mcontext->__ss.__lr;
-        uint64_t fp = uc->uc_mcontext->__ss.__fp; const uint64_t sp = uc->uc_mcontext->__ss.__sp;
+        h.pc = BO2_UC_PC(uc); h.lr = BO2_UC_LR(uc);
+        uint64_t fp = BO2_UC_FP(uc); const uint64_t sp = BO2_UC_SP(uc);
         for (int i = 0; i < 6; i++) {           // bounded, aligned, ascending: never off the stack
             if (fp < sp || fp - sp > (256u << 10) || (fp & 15u)) break;
             const uint64_t* f = (const uint64_t*)fp;
@@ -13935,6 +13946,32 @@ static void bo2_hw_arm(uint32_t va) {
 }
 int g_w32_force = 0;    // >0 while anything that inspects EVERY address is live
 static int g_w32_fast_on = 0;   // BO2_W32_FAST=1 opts in; see the warning below
+// Android : PREEMPTION PAR TRANCHE DE TEMPS. Le code replie decomptait BO2_PREEMPT_W ecritures sur le fil ordonnanceur
+// (un decompte partage, ecrit a chaque ecriture invitee, avec le test du registre de fil) avant de ceder la coroutine
+// courante. Ici un fil du runtime leve `bo2_preempt_now` toutes les BO2_PREEMPT_US (defaut 2000 us, l'ordre de 80 000
+// ecritures du fil ordonnanceur sur le S26) ; l'ecriture repliee ne fait qu'une charge et un saut, et seulement le
+// drapeau leve, elle verifie le fil ordonnanceur et appelle win32_thread_write_tick, qui le rabaisse. Rien n'est envoye
+// au fil ordonnanceur (pas de signal : il a SIGPROF et sa pile de signaux) ; il voit le drapeau a sa prochaine ecriture.
+extern "C" volatile uint32_t bo2_preempt_now = 0;
+static void bo2_preempt_timer_start() {
+    static bool started = false;
+    if (started) return;
+    started = true;
+    const char* e = bo2_getenv("BO2_PREEMPT_US");
+    const long us = e ? atol(e) : 2000L;
+    if (us <= 0) {
+        fprintf(stderr, "[PREEMPT-T] desarme (BO2_PREEMPT_US=%ld)\n", us);
+        return;
+    }
+    std::thread([us] {
+        pthread_setname_np(pthread_self(), "bo2_preempt");
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::microseconds(us));
+            __atomic_store_n(&bo2_preempt_now, 1u, __ATOMIC_RELAXED);
+        }
+    }).detach();
+    fprintf(stderr, "[PREEMPT-T] la coroutine courante du fil ordonnanceur cede toutes les %ld us (BO2_PREEMPT_US)\n", us);
+}
 __attribute__((constructor(102)))
 static void w32_fast_init() {
     // the static special addresses, as a superset of 64 KB granules
@@ -13984,6 +14021,13 @@ static void w32_fast_init() {
                 (unsigned long long)g_w32_preempt_every,
                 g_w32_preempt_every ? "" : " (desarme : valeur <= 0)");
     }
+#if defined(__ANDROID__)
+    // Android : la preemption par ecritures devient une preemption par tranche de temps (bo2_preempt_now, plus bas).
+    if (g_w32_preempt_every) {
+        bo2_preempt_timer_start();
+        g_w32_preempt_every = 0;    // la voie C++ ne decompte plus : elle teste le drapeau, comme le code replie
+    }
+#endif
     if (const char* f = bo2_getenv("BO2_W32_FENCE")) {
         g_w32_fence = atoi(f);
         fprintf(stderr, "[W32-FENCE] %d (%s)\n", g_w32_fence,
@@ -15403,7 +15447,7 @@ static std::unordered_map<uint32_t, BlockFn> g_jump_table;
 // dans 4 Go). Un mot atomique ne se dechire pas entre fils ; l'entree porte sa propre cle, donc un
 // ecrasement concurrent rend au pire un defaut. La table est remplie au demarrage ;
 // register_jump_target invalide quand meme la case de la va qu'il ecrit.
-extern "C" const struct mach_header_64 _mh_execute_header;
+// La base : BO2_IMAGE_BASE (bo2_platform.h), l'en-tete Mach-O sur Darwin, __ehdr_start sur Android.
 namespace {
 constexpr uint32_t kLkCases = 8192;
 std::atomic<uint64_t> g_lk_cache[kLkCases];
@@ -15902,7 +15946,7 @@ static void tas_provenance(const char* crochet, const State& s, uint32_t cible, 
 // running anything, so it can look for the next resumable frame up the stack.
 // C32 : la meme reponse que lookup_lifted, par le cache. nullptr si la va n'est pas liftee.
 static BlockFn lifted_fn(uint32_t va) {
-    const char* const base = reinterpret_cast<const char*>(&_mh_execute_header);
+    const char* const base = BO2_IMAGE_BASE;
     std::atomic<uint64_t>& e = g_lk_cache[lk_case(va)];
     const uint64_t w = e.load(std::memory_order_relaxed);
     if ((uint32_t)(w >> 32) == va && (uint32_t)w != 0u)
@@ -16008,10 +16052,110 @@ extern "C" uint32_t win32_send_message(State* s, uint32_t hwnd, uint32_t msg,
     return r;
 }
 
+#if defined(__ANDROID__) && defined(BO2_TARGET_ZMS)
+// Android : le jeu mixe en STEREO, sa propre configuration, plutot qu'en « 5.1 No Center 3D ».
+// L'init du son (0x831ba0) force snd_speakerConfiguration a "5.1 No Center 3D" avant toute chose, d'ou l'echec de
+// `+set snd_speakerConfiguration Stereo` sur la ligne de commande. La table des configurations (0xf5f6c8, 4 entrees de
+// 0x54 o : Stereo 2 voies, 5.1, 5.1 No Center 3D, 7.1) donne a chaque voix sa matrice de panoramique : 6 colonnes en
+// 5.1, 2 en Stereo, pour deux haut-parleurs. Le bus de mixage reste a 6 voies (code en dur dans l'init XAudio2,
+// 0x83432a) ; seules les voix rapetissent. La chaine "5.1 No Center 3D" (0xbab168) n'est lue qu'a deux endroits : le
+// push de cette init et le nom de l'entree 2 (0xf5f770). Ecrite "Stereo", l'init choisit l'entree 0, la vraie
+// Stereo du jeu (premiere correspondance) ; l'entree 2 porte le meme nom dans le menu du jeu (cosmetique).
+// On verifie les octets d'origine et le pointeur de la table avant d'ecrire : un autre exe est laisse tel quel.
+// BO2_AUDIO_STEREO=0 garde le 5.1. Temoin : [AUDIO] speaker configuration.
+static void audio_stereo_patch() {
+    const char* e = bo2_getenv("BO2_AUDIO_STEREO");
+    if (e && atoi(e) == 0) {
+        fprintf(stderr, "[AUDIO] speaker configuration: the game's own (BO2_AUDIO_STEREO=0)\n");
+        return;
+    }
+    static const char kFrom[] = "5.1 No Center 3D";
+    static const char kTo[] = "Stereo";
+    const uint32_t va = 0x00bab168u, entry2_name = 0x00f5f770u;
+    bool same = win32_mem_read32(entry2_name) == va;
+    for (uint32_t i = 0; same && i < sizeof kFrom; i++) same = win32_mem_read8(va + i) == (uint8_t)kFrom[i];
+    if (!same) {
+        fprintf(stderr, "[AUDIO] speaker configuration: not this exe's layout, left as the game sets it\n");
+        return;
+    }
+    for (uint32_t i = 0; i < sizeof kFrom; i++) win32_mem_write8(va + i, i < sizeof kTo ? (uint8_t)kTo[i] : 0);
+    fprintf(stderr, "[AUDIO] speaker configuration: Stereo (the sound init's 5.1 No Center 3D now selects the game's "
+                    "own Stereo entry; BO2_AUDIO_STEREO=0 keeps 5.1)\n");
+}
+
+// Android : la distance de LOD des modeles, reglable par les reglages graphiques de l'appli (graphics.cpp), pour que
+// les grandes cartes tiennent sur le telephone. r_lodScaleRigid / r_lodScaleSkinned (« Scale the level of detail
+// distance ... (larger reduces detail) », 1..4) sont proteges triche (drapeau 0x80) : `set` est refuse hors devmap
+// (0x757540 : drapeaux en dvar_t+0xC, 0x80 refuse sauf sv_cheats). On ote ce seul bit, sur ces deux dvars seulement,
+// pures distances de rendu (rien de jouable). Leur dvar_t* est range par l'enregistrement du rendu dans 0x34c5414
+// (Rigid) et 0x34c5378 (Skinned) ; avant d'ecrire, le nom pointe par dvar_t+0 doit etre exactement le leur (un autre
+// exe, ou un enregistrement pas encore fait, est laisse tel quel). Appele par l'appli juste avant d'envoyer les
+// reglages (game_host.cpp), depuis un fil hote qui n'est pas un fil invite : lecture et ecriture par la carte plate
+// (bo2_g_base), sans win32_mem_*, qui compte et preempte comme un fil invite. BO2_DVAR_UNLOCK=0 laisse la protection.
+// Puis deux autres dvars de coupe, memes regles (drapeau 0x80, nom verifie) :
+//  - r_zfar (0x34c5084) : la distance ou le « brouillard de coupe » du rendu devient opaque ; au-dela, un plan
+//    lointain retire cellules et modeles des la traversee de la scene (0x40e7a0 en fait le 5e plan des tests de
+//    visibilite), donc moins de travail sur le coeur principal, pas seulement sur le GPU. 0 (defaut) : la distance
+//    propre a la carte (bo2_map_cull_distance) s'applique ;
+//  - sm_strictCull (0x34c519c) : la coupe stricte des projeteurs d'ombre (defaut 0).
+// Et deux des effets (enregistres dans 0x5bae50) : fx_freeze (0x20b1a5c, les effets ne sont plus mis a jour : la
+// mesure BO2_FX_AB de l'appli, graphics_apply.cpp) et fx_drawClouds (0x20b1a6c, les nuages de particules).
+extern "C" int bo2_dvar_unlock_lod(void) {
+    const char* e = bo2_getenv("BO2_DVAR_UNLOCK");
+    if ((e && atoi(e) == 0) || !bo2_g_base) return 0;
+    struct Wanted { const char* name; uint32_t slot; };
+    static const Wanted kWanted[] = {{"r_lodScaleRigid", 0x034c5414u}, {"r_lodScaleSkinned", 0x034c5378u},
+                                     {"r_zfar", 0x034c5084u},          {"sm_strictCull", 0x034c519cu},
+                                     {"fx_freeze", 0x020b1a5cu},       {"fx_drawClouds", 0x020b1a6cu}};
+    auto rd32 = [](uint32_t a) { uint32_t v; memcpy(&v, bo2_g_base + a, 4); return v; };
+    int unlocked = 0, ready = 0;
+    for (const Wanted& w : kWanted) {
+        const uint32_t dv = rd32(w.slot);
+        if (dv < 0x10000u) continue;   // not registered yet
+        const uint32_t np = rd32(dv);
+        const size_t len = strlen(w.name);
+        if (np < 0x10000u || memcmp(bo2_g_base + np, w.name, len + 1) != 0) {
+            static bool said = false;
+            if (!said) {
+                said = true;
+                fprintf(stderr, "[DVAR] %s: not this exe's layout, left protected\n", w.name);
+            }
+            continue;
+        }
+        ++ready;
+        uint32_t* flags = reinterpret_cast<uint32_t*>(bo2_g_base + dv + 0x0cu);
+        const uint32_t f = __atomic_load_n(flags, __ATOMIC_RELAXED);
+        if (f & 0x80u) {
+            __atomic_store_n(flags, f & ~0x80u, __ATOMIC_RELAXED);
+            ++unlocked;
+        }
+    }
+    if (unlocked)
+        fprintf(stderr, "[DVAR] r_lodScaleRigid, r_lodScaleSkinned, r_zfar, sm_strictCull, fx_freeze, fx_drawClouds "
+                        "settable by the app (cheat flag lifted on %d of %zu; BO2_DVAR_UNLOCK=0 keeps it)\n", unlocked,
+                sizeof kWanted / sizeof kWanted[0]);
+    return ready;
+}
+
+// Android : la distance de coupe propre a la carte en cours, celle que le rendu prend quand r_zfar vaut 0 (0x333b778,
+// un float que le cgame pose depuis le brouillard de la carte ; 0x40e7a0 la lit en repli). L'appli ne demande un
+// r_zfar que plus proche que celle-ci (graphics.cpp, cull_distance) : r_zfar la remplace, il ne la borne pas.
+// -1 : illisible (pas encore d'image invitee, ou une valeur qui n'est pas une distance).
+extern "C" float bo2_map_cull_distance(void) {
+    if (!bo2_g_base) return -1.f;
+    float v;
+    memcpy(&v, bo2_g_base + 0x0333b778u, 4);
+    return v >= 0.f && v < 1.0e7f ? v : -1.f;
+}
+#endif
+
 // --- shim initialization ---
 #include "log_pipe.h"
 void win32_shim_init() {
     bo2_journal_par_tube();   // [JOURNAL] : avant tout fil de jeu
+#if defined(__ANDROID__) && defined(BO2_TARGET_ZMS)
+    audio_stereo_patch();     // avant tout code invite : l'init du son lira la chaine modifiee
+#endif
     register_extra_lifted();
     // build name → implementation map from kernel32_impls
     const ImportEntry* k32 = get_kernel32_impls();
@@ -16069,7 +16213,22 @@ void win32_shim_init() {
 // --- import dispatch ---
 static int g_import_call_count = 0;
 extern "C" int g_import_call_count_probe() { return g_import_call_count; }
-static const int MAX_IMPORT_LOG = 100000;  // log every import call (trace = ground truth for the arity sweep)
+// Log the first N import calls (the trace is ground truth for the arity sweep). Android: 0 unless BO2_IMPORT_LOG=N,
+// because the first 100 000 calls were 92 % of a Zombies session's log (94 678 of 103 003 lines on the S26), all in
+// the first seconds of every launch. Elsewhere 100 000, as before.
+static int import_log_cap() {
+    static const int cap = [] {
+        const char* e = bo2_getenv("BO2_IMPORT_LOG");
+        if (e && *e) return atoi(e);
+#if defined(__ANDROID__)
+        return 0;
+#else
+        return 100000;
+#endif
+    }();
+    return cap;
+}
+#define MAX_IMPORT_LOG (import_log_cap())
 // Tunable at run time so a "is it progressing?" run can go past the guard
 // without a rebuild: BO2_MAX_IMPORTS=20000000 BO2_PROFILE=250000 ./boot ...
 static int g_max_imports = [] {
@@ -17221,9 +17380,7 @@ extern thread_local int t_host_tid;        // kernel32_impl.cpp
 // par maybe_host() avant g_any_hosted. Meme predicat ici que dans l'IR.
 extern "C" uint64_t bo2_sched_tp;          // kernel32_impl.cpp
 static inline uint64_t w32_read_tp() {
-    uint64_t v;
-    __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(v));
-    return v;
+    return bo2_read_thread_pointer();   // tpidrro_el0 sur Darwin, tpidr_el0 sur Android
 }
 static inline bool w32_on_sched_thread() {
     return !g_any_hosted || w32_read_tp() == bo2_sched_tp;
@@ -17234,6 +17391,10 @@ static inline bool w32_on_sched_thread() {
 extern "C" int bo2_host_backoff_if_hosted(void);
 [[gnu::used]] void* __remill_write_memory_32_slow(void* m, uint32_t a, uint32_t v) {
     if (!w32_try_fast(a, v)) win32_mem_write32(a, v);
+#if defined(__ANDROID__)
+    // Tranche de temps (bo2_preempt_timer_start) : le meme test que l'ecriture repliee.
+    if (__builtin_expect(bo2_preempt_now != 0, 0) && w32_on_sched_thread()) win32_thread_write_tick();
+#endif
     if (__builtin_expect(g_w32_preempt_every != 0, 0)) {
         // `g_any_hosted` d'abord : tant qu'il est faux (defaut), rien d'autre
         // n'est lu. Heberge : `tpidrro_el0`, pas le TLS (C18).
@@ -18343,7 +18504,45 @@ extern "C" void win32_teardown_repair(void) {
 }
 
 extern std::atomic<bool> g_bo2_in_level_zone;
-static void crumb_and_check(State& s, char kind, uint32_t target) {
+// -1 : pas encore lu ; 0 : eteint ; 1 : arme. Un entier global et une branche predite (pas de static de bloc).
+static int g_crumbs_on = -1;
+[[gnu::noinline, gnu::cold]] static bool crumbs_resolve() {
+#if defined(__ANDROID__)
+    g_crumbs_on = bo2_env_on("BO2_CRUMBS") ? 1 : 0;
+#else
+    g_crumbs_on = bo2_env_on("BO2_CRUMBS", true) ? 1 : 0;
+#endif
+    fprintf(stderr, "[CRUMBS] anneau des repartitions %s (BO2_CRUMBS)\n", g_crumbs_on ? "ARME" : "eteint");
+    return g_crumbs_on > 0;
+}
+// Android : une voie courte devant crumb_and_check, toujours en ligne. Dans une partie ordinaire aucune de ses
+// sondes n'est armee (anneau eteint, BO2_WALK_LOG / BO2_PRED_WATCH / BO2_EBP_WATCH absents, RING2 au repos) : il ne
+// reste que audio_preempt et les tests d'esp. L'appel complet et ses gardes de statiques coutaient encore 2,8 % du
+// serveur et ~1 % du fil ordonnanceur (S26). g_crumb_court : -1 pas resolu, 0 entree complete, 1 voie courte.
+static void crumb_and_check_full(State& s, char kind, uint32_t target);
+static int g_crumb_court = -1;
+[[gnu::always_inline]] static inline void crumb_and_check(State& s, char kind, uint32_t target) {
+#if defined(__ANDROID__)
+    const uint32_t esp = s.gpr.rsp.dword;
+    if (__builtin_expect(g_crumb_court > 0 && !g_r2_armed && esp - 0x00010000u < 0xfff00000u - 0x00010000u &&
+                             esp - 0x00400000u >= 0x00a40000u - 0x00400000u && target != 0x00839f70u &&
+                             target != 0x00657a50u && target != 0x0095eb50u && target != 0x00964030u &&
+                             target != 0x00964046u, 1)) {
+        audio_preempt();
+        return;
+    }
+#endif
+    crumb_and_check_full(s, kind, target);
+}
+static void crumb_and_check_full(State& s, char kind, uint32_t target) {
+#if defined(__ANDROID__)
+    if (__builtin_expect(g_crumb_court < 0, 0)) {
+        const bool sondes = (g_crumbs_on < 0 ? crumbs_resolve() : g_crumbs_on > 0) || bo2_getenv("BO2_WALK_LOG") ||
+                            bo2_getenv("BO2_PRED_WATCH") || (g_ebp_watch < 0 ? ebp_watch_init() : g_ebp_watch) != 0;
+        g_crumb_court = sondes ? 0 : 1;
+        fprintf(stderr, "[CRUMBS] voie courte des repartitions : %s\n", g_crumb_court ? "ARMEE" : "non (sondes armees)");
+    }
+#endif
     // 🎯 BO2_PRED_WATCH=1 — READ THE COUNTDOWN MAIN NEVER ESCAPES.
     //
     // The angola freeze is main spinning in the job-wait at 0x8fb170, whose exit
@@ -18497,11 +18696,16 @@ static void crumb_and_check(State& s, char kind, uint32_t target) {
     if (__builtin_expect(!g_iat_watch_armed, 0)) g_iat_watch_armed = true;
     ebp_poison_probe(s, kind, target);
     audio_preempt();
-    g_crumbs[g_crumb_n & 2047] = {kind, (uint8_t)win32_current_tid(), target,
-                                 s.gpr.rsp.dword,
-                                 win32_mem_read32(s.gpr.rsp.dword),
-                                 s.gpr.rdx.dword};
-    g_crumb_n++;
+    // Android : l'anneau de miettes (un identifiant de fil, une lecture de la pile invitee et une ligne partagee
+    // par tous les fils, a chaque repartition indirecte) ne sert qu'aux rapports de plantage ; il pesait 1 % du
+    // fil ordonnanceur et 5,6 % du serveur sur le S26. BO2_CRUMBS=1 le remet ; ailleurs il reste arme.
+    if (__builtin_expect(g_crumbs_on != 0, 0) && (g_crumbs_on > 0 || crumbs_resolve())) {
+        g_crumbs[g_crumb_n & 2047] = {kind, (uint8_t)win32_current_tid(), target,
+                                     s.gpr.rsp.dword,
+                                     win32_mem_read32(s.gpr.rsp.dword),
+                                     s.gpr.rdx.dword};
+        g_crumb_n++;
+    }
     // RING2 dispatch trail (armed during the patch.ff load)
     if (g_r2_armed) { g_jr[g_jrn & 32767u] = target; g_jrn++; }
     uint32_t esp = s.gpr.rsp.dword;
@@ -19721,15 +19925,14 @@ static void bo2_crash_handler(int sig, siginfo_t* si, void* ctx) {
     }
     // Registres a la faute (Z-NATIF-18d). pc == fault_addr : c'est un SAUT vers une adresse folle (pointeur de fonction
     // ou adresse de retour ecrases) et la pile d'appels ci-dessous ne nomme que lr ; sinon pc est l'instruction fautive.
-    if (ucontext_t* uc = (ucontext_t*)ctx; uc && uc->uc_mcontext) {
-        const auto& ss = uc->uc_mcontext->__ss;
-        void* ou[2] = { (void*)__darwin_arm_thread_state64_get_pc(ss), (void*)__darwin_arm_thread_state64_get_lr(ss) };
+    if (ucontext_t* uc = (ucontext_t*)ctx; BO2_UC_HAS_MCONTEXT(uc)) {
+        void* ou[2] = { (void*)BO2_UC_PC(uc), (void*)BO2_UC_LR(uc) };
         fprintf(stderr, "  [regs] pc=%p lr=%p sp=%#llx fp=%#llx\n", ou[0], ou[1],
-                (unsigned long long)__darwin_arm_thread_state64_get_sp(ss),
-                (unsigned long long)__darwin_arm_thread_state64_get_fp(ss));
+                (unsigned long long)BO2_UC_SP(uc), (unsigned long long)BO2_UC_FP(uc));
         for (int i = 0; i < 28; i += 4)
-            fprintf(stderr, "  [regs] x%-2d=%#018llx x%-2d=%#018llx x%-2d=%#018llx x%-2d=%#018llx\n", i, ss.__x[i],
-                    i + 1, ss.__x[i + 1], i + 2, ss.__x[i + 2], i + 3, ss.__x[i + 3]);
+            fprintf(stderr, "  [regs] x%-2d=%#018llx x%-2d=%#018llx x%-2d=%#018llx x%-2d=%#018llx\n",
+                    i, (unsigned long long)BO2_UC_X(uc, i), i + 1, (unsigned long long)BO2_UC_X(uc, i + 1),
+                    i + 2, (unsigned long long)BO2_UC_X(uc, i + 2), i + 3, (unsigned long long)BO2_UC_X(uc, i + 3));
         fflush(stderr);
         backtrace_symbols_fd(ou, 2, 2);
     }
@@ -19821,7 +20024,11 @@ extern "C" void win32_install_crash_handler() {
     // this stack, so it must be set on whichever host thread actually runs guest
     // code (the big-stack scheduler thread), not just the process main thread.
     // thread_local gives each host thread its own altstack; call once per thread.
+#if defined(__GLIBC__)   // glibc 2.34+: SIGSTKSZ is sysconf(_SC_SIGSTKSZ), not a constant
+    static thread_local char altstack[4 * 65536];
+#else
     static thread_local char altstack[SIGSTKSZ * 4];
+#endif
     static thread_local bool alt_done = false;
     if (!alt_done) {
         alt_done = true;
@@ -20098,6 +20305,129 @@ static const char* lui_builtin_name(uint32_t va) {
     return nullptr;
 }
 
+// BO2_LUI_TABLE=<file> (with BO2_LUI_PROBE): "hexva name" lines naming the C functions an executable registers with
+// its Lua VM (any target; the table above is t6sp's). The script's calls into the engine are logged by name: every
+// call of those that run commands or open and close menus, parties and lobbies, with their string arguments, and the
+// first call of every other. Stack slots are 8 bytes, type tag first (4 = string), a string's bytes at +12.
+extern "C" int win32_current_tid();
+struct LuiRingEntry { const std::string* name; uint32_t n, nargs, tag[3], val[3]; };
+static constexpr uint32_t kLuiRing = 96;
+static LuiRingEntry g_lui_ring[kLuiRing];
+static uint64_t g_lui_ring_n = 0;
+
+static std::string bo2_lui_value(uint32_t tag, uint32_t v) {
+    char a[160];
+    if (tag == 4 && v > 0x10000) {
+        int k = 0;
+        for (; k < 100; k++) {
+            const uint8_t c = win32_mem_read8(v + 12 + (uint32_t)k);
+            if (!c) break;
+            a[k] = (c >= 32 && c < 127) ? (char)c : '.';
+        }
+        a[k] = 0;
+        return " \"" + std::string(a) + "\"";
+    }
+    snprintf(a, sizeof a, " t%u:%x", tag, v);
+    return a;
+}
+
+// Debug (BO2_LUI_PROBE + BO2_LUI_TABLE): the last kLuiRing named engine calls the script made, oldest first, then
+// the value stack of Lua state L (slots from base-16 to top; 0 = skip). Called by the harness's stuck-thread watchdog.
+extern "C" void bo2_lui_ring_dump(uint32_t L) {
+    const uint64_t end = g_lui_ring_n, start = end > kLuiRing ? end - kLuiRing : 0;
+    fprintf(stderr, "[LUI-RING] last %llu of %llu named calls:\n", (unsigned long long)(end - start),
+            (unsigned long long)end);
+    for (uint64_t i = start; i < end; i++) {
+        const LuiRingEntry& e = g_lui_ring[i % kLuiRing];
+        std::string args;
+        for (uint32_t k = 0; k < e.nargs; k++) args += bo2_lui_value(e.tag[k], e.val[k]);
+        fprintf(stderr, "[LUI-RING]   %s #%u%s\n", e.name ? e.name->c_str() : "?", e.n, args.c_str());
+    }
+    if (!L) return;
+    const uint32_t base = win32_mem_read32(L + 0x28), top = win32_mem_read32(L + 0x24);
+    fprintf(stderr, "[LUI-STACK] L %x base %x top %x\n", L, base, top);
+    if (top < base || top - base > 8 * 400) return;
+    for (uint32_t slot = base >= 8 * 16 ? base - 8 * 16 : base; slot < top; slot += 8)
+        fprintf(stderr, "[LUI-STACK]   %+d:%s\n", (int)(slot - base) / 8,
+                bo2_lui_value(win32_mem_read32(slot) & 0xf, win32_mem_read32(slot + 4)).c_str());
+}
+
+static bool bo2_lui_table_call(const State& state, uint32_t addr) {
+    static const std::unordered_map<uint32_t, std::string>* table = [] {
+        auto* m = new std::unordered_map<uint32_t, std::string>;
+        const char* path = bo2_getenv("BO2_LUI_TABLE");
+        FILE* f = path ? fopen(path, "r") : nullptr;
+        char line[256];
+        while (f && fgets(line, sizeof line, f)) {
+            char nm[200];
+            unsigned va;
+            if (sscanf(line, "%x %199s", &va, nm) == 2) (*m)[va] = nm;
+        }
+        if (f) fclose(f);
+        if (path) fprintf(stderr, "[LUI-TABLE] %zu names from %s\n", m->size(), path);
+        return m;
+    }();
+    if (table->empty()) return false;
+    const auto it = table->find(addr);
+    if (it == table->end()) return false;
+    static std::mutex mu;
+    static std::unordered_map<uint32_t, uint32_t> calls;
+    std::lock_guard<std::mutex> lock(mu);
+    const uint32_t n = ++calls[addr];
+    const std::string& nm = it->second;
+    if (win32_current_tid() == 0) {   // ring of the main thread's last calls (name, first three argument slots),
+                                     // printed by bo2_lui_ring_dump (other threads call shared no-op stubs a lot)
+        const uint32_t L = win32_mem_read32(state.gpr.rsp.dword + 4);
+        const uint32_t base = win32_mem_read32(L + 0x28), top = win32_mem_read32(L + 0x24);
+        LuiRingEntry& e = g_lui_ring[g_lui_ring_n++ % kLuiRing];
+        e.name = &nm;
+        e.n = n;
+        e.nargs = 0;
+        for (uint32_t slot = base; slot < top && e.nargs < 3; slot += 8, e.nargs++) {
+            e.tag[e.nargs] = win32_mem_read32(slot) & 0xf;
+            e.val[e.nargs] = win32_mem_read32(slot + 4);
+        }
+    }
+    std::string low(nm);
+    for (char& c : low) c = (char)tolower((unsigned char)c);
+    bool every = low.find("exec") != std::string::npos || low.find("menu") != std::string::npos ||
+                 low.find("popup") != std::string::npos || low.find("party") != std::string::npos ||
+                 low.find("lobby") != std::string::npos || low.find("goback") != std::string::npos;
+    // BO2_LUI_ALL_FILE=<path>: while that file exists, every call is logged (at most 40000 lines), so a window of
+    // the script's activity can be captured whole by creating the file just before the action of interest.
+    static uint64_t polled = 0, all_logged = 0;
+    static bool all_on = false;
+    if ((polled++ & 1023) == 0) {
+        static const char* all_file = bo2_getenv("BO2_LUI_ALL_FILE");
+        struct stat st {};
+        all_on = all_file && ::stat(all_file, &st) == 0;
+    }
+    if (all_on && all_logged < 40000) { every = true; all_logged++; }
+    if (!every && n > 1) return true;
+    std::string args;
+    const uint32_t L = win32_mem_read32(state.gpr.rsp.dword + 4);
+    const uint32_t base = win32_mem_read32(L + 0x28), top = win32_mem_read32(L + 0x24);
+    for (uint32_t slot = base; slot < top && slot < base + 8 * 6; slot += 8) {
+        const uint32_t tag = win32_mem_read32(slot) & 0xf, v = win32_mem_read32(slot + 4);
+        char a[160];
+        if (tag == 4 && v > 0x10000) {
+            int k = 0;
+            for (; k < 120; k++) {
+                const uint8_t c = win32_mem_read8(v + 12 + (uint32_t)k);
+                if (!c) break;
+                a[k] = (c >= 32 && c < 127) ? (char)c : '.';
+            }
+            a[k] = 0;
+            args += " \"" + std::string(a) + "\"";
+        } else {
+            snprintf(a, sizeof a, " t%u:%x", tag, v);
+            args += a;
+        }
+    }
+    fprintf(stderr, "[LUI-CALL] %s #%u (sub_%08x)%s\n", nm.c_str(), n, addr, args.c_str());
+    return true;
+}
+
 // 🎯 QUELS BUILTINS LE SCRIPT APPELLE-T-IL VRAIMENT ?
 // L'opcode 0x29 du VM GSC appelle son builtin par `mov ecx,[ebx] ; call ecx`
 // (handler 0x880417), donc TOUS les builtins passent par ce repartiteur
@@ -20299,9 +20629,9 @@ static void* bo2_remill_call_inner(State& state, uint32_t addr, void* mem) {
                 win32_mem_read32(esp + 0x10), win32_current_tid());
     }
     // Steam interface method? (fake vtable sentinel 0xE7iissss)
-    if (steam_vtbl_dispatch(state, addr)) return mem;
+    if ((addr >> 24) == 0xE7u && steam_vtbl_dispatch(state, addr)) return mem;   // 0xE7xxxxxx seulement
     // D3D11/DXGI COM method? (fake vtable sentinel 0xE6iissss)
-    if (d3d_vtbl_dispatch(state, addr)) return mem;
+    if ((addr >> 24) == 0xE6u && d3d_vtbl_dispatch(state, addr)) return mem;     // 0xE6xxxxxx seulement
     // DirectSound method? (fake vtable sentinel 0xE5iissss, BO2_DSOUND=1)
     // XAudio2 first: it shares the 0xE5 sentinel space and owns iface >= 5.
     if (xaudio_vtbl_dispatch(state, addr)) return mem;
@@ -20528,7 +20858,9 @@ static void* bo2_remill_call_inner(State& state, uint32_t addr, void* mem) {
         // caused — no name table required.
         bo2_cfn_diff_note(addr);
         static const int lui_probe = bo2_getenv("BO2_LUI_PROBE") ? 1 : 0;
-        if (lui_probe) {
+        if (lui_probe && bo2_lui_table_call(state, addr)) {
+            // BO2_LUI_TABLE named it (bo2_lui_table_call logged it)
+        } else if (lui_probe) {
             const char* bn = lui_builtin_name(addr);
             if (bn) {
                 static std::unordered_map<uint32_t, uint32_t> seen;
@@ -20940,6 +21272,17 @@ uint32_t bo2_ret_cold = 0xffffffffu;   // 0 replie, 1 entree complete, ~0 pas re
 }
 [[gnu::used]] void* __remill_function_return(State& state, uint32_t addr, void* mem) {
     state._0 = addr;
+    // Android : le repli IR du `ret` (_inline_guest_ret) n'est pas applique par fold_lift.sh, a cause du test
+    // du code du tas ; chaque `ret` arrive donc ici (3 a 4 % du fil ordonnanceur sur le S26). Meme voie courte
+    // que le repli, plus ce test fait en ligne : une cible dans l'image [0x400000, 0x43bc000) n'est jamais du
+    // code du tas (bo2_est_heap_code, heap_code.cpp). Sondes de ret (bo2_ret_cold != 0), esp sauvage et cible
+    // 0x883440 prennent l'entree complete, comme avec le repli.
+    {
+        const uint32_t esp = state.gpr.rsp.dword;
+        if (__builtin_expect(bo2_ret_cold == 0 && addr - 0x400000u < 0x43bc000u - 0x400000u &&
+                                 esp - 0x10000u < 0xfff00000u - 0x10000u && addr != 0x883440u, 1))
+            return mem;
+    }
     // P725 : un `ret` vers le tas. Le destructeur de garde CEG 0x8ce090 a glisse l'entree du corps
     // dechiffre (bloc+0x40) dans la case de retour de l'enveloppe (sub_5090f0 pour
     // updategamerprofile), qui a ete decalee d'un mot. Sous Windows le processeur y va : le corps
@@ -36847,8 +37190,8 @@ extern "C" int g_gsc_noyield = 0;
     // Steam interface method reached via tail-jmp (`return this->method(...)`).
     // The tail-call reuses the frame, so [esp]=retaddr/[esp+4]=args exactly like
     // a call — steam_vtbl_dispatch handles it identically.
-    if (steam_vtbl_dispatch(*state, target)) return mem;
-    if (d3d_vtbl_dispatch(*state, target)) return mem;
+    if ((target >> 24) == 0xE7u && steam_vtbl_dispatch(*state, target)) return mem;
+    if ((target >> 24) == 0xE6u && d3d_vtbl_dispatch(*state, target)) return mem;
     // check if it's an IAT sentinel (thunk: jmp [IAT])
     if (iat_peut_etre(target)) {   // C32
         auto it = g_import_dispatch.find(target);
@@ -37973,9 +38316,7 @@ extern "C" void set_fsbase(uint32_t val) { g_fsbase = val; }
 // 1,7 % du fil ordonnanceur en srvbe (deux appels par instruction `lock`). Seul
 // usage : l'identite du proprietaire de g_hwa_verrou.owner, comparee a elle-meme.
 static inline uint64_t hw_host_tid(void) {
-    uint64_t v;
-    __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(v));
-    return v;
+    return bo2_read_thread_pointer();   // tpidrro_el0 sur Darwin, tpidr_el0 sur Android
 }
 // ⚠️ PAS un `static const` de bloc : un static magique emet un test de GARDE
 // atomique a CHAQUE appel, et cette fonction est appelee deux fois par
@@ -37990,9 +38331,12 @@ static inline uint64_t hw_host_tid(void) {
 struct alignas(128) HwaLu {
     int mode = -1;
     bool cede_seq = false;                   // P645, bras temoin (voir hw_atomics_mode_init)
+    bool temoins = false;                    // BO2_HWA_TEMOINS=1 : holder/croise remplis (diagnostic)
 };
 static HwaLu g_hwa_lu;
-enum { HWA_TOURS = 1024 };                   // C29 : essais en lecture avant de rendre le cœur
+// Android S26 : 1024 tours (~1 us) avant sched_yield, et sched_yield pesait 4 % du fil ordonnanceur (le goulot) ;
+// il y a des cœurs libres, donc on attend plus longtemps en lecture avant de rendre le cœur.
+enum { HWA_TOURS = 32768 };                  // C29 : essais en lecture avant de rendre le cœur
 static int hw_atomics_mode_init(void) {
     const char* e = bo2_getenv("BO2_HW_ATOMICS");
     const int v = e ? atoi(e) : 0;
@@ -38009,6 +38353,8 @@ static int hw_atomics_mode_init(void) {
     {
         const char* c = bo2_getenv("BO2_HWA_CEDE_SEQ");
         g_hwa_lu.cede_seq = c && atoi(c) != 0;
+        const char* t = bo2_getenv("BO2_HWA_TEMOINS");
+        g_hwa_lu.temoins = t && atoi(t) != 0;
         if (v >= 2)
             fprintf(stderr, "[HW-ATOMIC] cede dans une sequence verrouillee : %s\n",
                     g_hwa_lu.cede_seq ? "PERMIS (bras temoin BO2_HWA_CEDE_SEQ=1, gel attendu en JSS)"
@@ -38060,8 +38406,14 @@ static inline int hwa_guest_tid(void) {
     return w32_on_sched_thread() ? win32_current_tid() : t_host_tid;
 }
 // 1 si le fil hote courant est DANS une sequence verrouillee : le cede est note.
+#if defined(__ANDROID__)
+static int hwa_defer_rayures(int kind);   // plus bas, avec les rayures
+#endif
 static int hwa_defer(int kind) {
     if (hw_atomics_mode() < 2 || g_hwa_lu.cede_seq) return 0;
+#if defined(__ANDROID__)
+    return hwa_defer_rayures(kind);
+#endif
     if (g_hwa_verrou.owner.load(std::memory_order_relaxed) != hw_host_tid() + 1 || g_hwa.depth == 0)
         return 0;
     if (g_hwa.pending == 0 || kind < g_hwa.pending) g_hwa.pending = kind;
@@ -38126,6 +38478,123 @@ static inline void c33_herite_entrer() {
     for (uint32_t i = 0; i < n; ++i)
         if (__atomic_load_n(&g_c33_drapeaux[i].en_vol, __ATOMIC_SEQ_CST) != 0) c33_attendre(i);
 }
+#if defined(__ANDROID__)
+// 🎯 ANDROID — UN VERROU PAR ADRESSE (RAYURES), PLUS LE VERROU GLOBAL.
+// Sous Windows, deux instructions `lock` sur deux adresses differentes ne s'attendent pas : chacune est une
+// operation materielle sur SA ligne. Ici, chaque sequence prenait LE verrou global : un `lock xadd` sur un compteur
+// de taches et un `lock inc` sur un compteur de references, sur deux cœurs, s'excluaient. C'est ce qui interdisait
+// d'heberger les ouvriers jq (contention mesuree sur le S26 : 11 % du fil ordonnanceur a attendre ce verrou).
+// La passe de repli stream_inline_atomic.py (Android) rend `begin` inerte et pose bo2_atomic_lock_at(adresse) juste
+// avant le premier acces memoire de la sequence, la ou l'adresse est connue : on prend alors la rayure de sa ligne
+// (64 o). Deux sequences sur la meme ligne s'excluent toujours, comme sous le verrou global ; deux sur des lignes
+// differentes ne s'attendent plus. Les sequences sans adresse connue (formes non reconnues, appelants du runtime
+// sans adresse) prennent TOUTES les rayures, dans l'ordre : c'est exactement l'ancien verrou global.
+// Reentrance : par fil hote, comme avant. Une sequence imbriquee (un crochet dans une lecture) ne prend rien de plus.
+// L'etat par fil (profondeur, cede differe, rayure tenue) est dans une petite table indexee par le registre de fil
+// (pas de TLS : un acces TLS dynamique par instruction `lock` coutait plus cher que le verrou).
+static constexpr uint32_t kRayures = 256;          // puissance de 2 ; kRayures = « toutes »
+struct alignas(64) Rayure { std::atomic<uint64_t> owner{0}; };
+static Rayure g_rayures[kRayures];
+struct alignas(64) HwaFil {
+    std::atomic<uint64_t> tp{0};    // fil hote proprietaire de l'entree + 1
+    uint32_t depth = 0;
+    uint32_t rayure = 0;            // rayure tenue, ou kRayures : toutes
+    int pending = 0;                // cede differe
+    uint64_t enter = 0, contended = 0, toutes = 0, differe[4] = {};
+};
+static constexpr uint32_t kHwaFils = 512;
+static HwaFil g_hwa_fils[kHwaFils];
+static inline HwaFil* hwa_fil(uint64_t me) {
+    uint32_t i = (uint32_t)((me * 0x9E3779B97F4A7C15ull) >> 55) & (kHwaFils - 1);
+    for (uint32_t k = 0; k < kHwaFils; ++k, i = (i + 1) & (kHwaFils - 1)) {
+        HwaFil& f = g_hwa_fils[i];
+        uint64_t t = f.tp.load(std::memory_order_relaxed);
+        if (__builtin_expect(t == me, 1)) return &f;
+        if (t == 0 && (f.tp.compare_exchange_strong(t, me, std::memory_order_relaxed) || t == me)) return &f;
+    }
+    fprintf(stderr, "[HWA] table des fils pleine (%u) : abandon\n", kHwaFils);
+    abort();
+}
+[[gnu::noinline, gnu::cold]] static void rayure_attendre(Rayure& r, uint64_t me) {
+    for (uint32_t n = 0;; ++n) {
+        if (r.owner.load(std::memory_order_relaxed) == 0) {
+            uint64_t expect = 0;
+            if (r.owner.compare_exchange_weak(expect, me, std::memory_order_acquire, std::memory_order_relaxed)) return;
+        }
+        if (n < HWA_TOURS) {
+            __asm__ __volatile__("yield" ::: "memory");
+        } else {
+            g_hwa_att.cedes.fetch_add(1, std::memory_order_relaxed);
+            sched_yield();
+            n = 0;
+        }
+    }
+}
+static inline bool rayure_prendre(Rayure& r, uint64_t me) {   // vrai si disputee
+    uint64_t expect = 0;
+    if (__builtin_expect(r.owner.compare_exchange_strong(expect, me, std::memory_order_acquire,
+                                                         std::memory_order_relaxed), 1))
+        return false;
+    rayure_attendre(r, me);
+    return true;
+}
+static inline void hwa_prendre(HwaFil* f, uint64_t me, uint32_t idx) {
+    if (f->depth++ != 0) return;    // imbriquee : la rayure (ou toutes) deja tenue suffit
+    f->rayure = idx;
+    ++f->enter;
+    if (__builtin_expect(idx < kRayures, 1)) {
+        if (rayure_prendre(g_rayures[idx], me)) ++f->contended;
+    } else {
+        ++f->toutes;
+        for (uint32_t i = 0; i < kRayures; ++i) rayure_prendre(g_rayures[i], me);
+    }
+}
+static inline void hwa_rendre(HwaFil* f) {
+    if (f->depth == 0 || --f->depth != 0) return;
+    const int pend = f->pending;    // P645 : lu avant de rendre, fait apres
+    f->pending = 0;
+    if (__builtin_expect(f->rayure < kRayures, 1)) {
+        g_rayures[f->rayure].owner.store(0, std::memory_order_release);
+    } else {
+        for (uint32_t i = kRayures; i-- > 0;) g_rayures[i].owner.store(0, std::memory_order_release);
+    }
+    if (__builtin_expect(pend != 0, 0)) hwa_run_deferred(pend);
+}
+// Appeles par le code leve (stream_inline_atomic.py) et par les Interlocked* du runtime.
+extern "C" [[gnu::used]] void bo2_atomic_lock_at(uint32_t a) {
+    if (__builtin_expect(hw_atomics_mode() >= 2, 1)) {
+        const uint64_t me = hw_host_tid() + 1;
+        hwa_prendre(hwa_fil(me), me, (a >> 6) & (kRayures - 1));
+    }
+    if (__builtin_expect(hw_atomics_mode() >= 1, 1)) __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+}
+extern "C" [[gnu::used]] void* bo2_atomic_end_at(void* mem) {
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+    const int mode = hw_atomics_mode();
+    if (__builtin_expect(mode >= 1, 1)) __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    if (__builtin_expect(mode >= 2, 1)) hwa_rendre(hwa_fil(hw_host_tid() + 1));
+    return mem;
+}
+[[gnu::used]] void* __remill_atomic_begin(void* mem) {   // adresse inconnue : toutes les rayures
+    const int mode = hw_atomics_mode();
+    if (__builtin_expect(mode >= 2, 0)) {
+        const uint64_t me = hw_host_tid() + 1;
+        hwa_prendre(hwa_fil(me), me, kRayures);
+    }
+    if (__builtin_expect(mode >= 1, 0)) __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+    return mem;
+}
+[[gnu::used]] void* __remill_atomic_end(void* mem) { return bo2_atomic_end_at(mem); }
+static int hwa_defer_rayures(int kind) {
+    HwaFil* const f = hwa_fil(hw_host_tid() + 1);
+    if (f->depth == 0) return 0;
+    if (f->pending == 0 || kind < f->pending) f->pending = kind;
+    ++f->differe[kind];
+    return 1;
+}
+#else
 [[gnu::used]] void* __remill_atomic_begin(void* mem) {
     const int mode = hw_atomics_mode();
     // 🔴 P624 — CE COMPTEUR ETAIT SOUS `if (mode >= 2)`, DONC AVEUGLE A DEUX
@@ -38141,14 +38610,15 @@ static inline void c33_herite_entrer() {
         const uint64_t me = hw_host_tid() + 1;
         if (g_hwa_verrou.owner.load(std::memory_order_relaxed) == me) {
             ++g_hwa.depth;                      // reentrance du meme fil HOTE
-            if (hwa_guest_tid() != g_hwa.holder) ++g_hwa.croise;   // P645 : temoin
+            if (__builtin_expect(g_hwa_lu.temoins, 0) && hwa_guest_tid() != g_hwa.holder) ++g_hwa.croise;   // P645
         } else {
             uint64_t expect = 0;
             const bool dispute = !g_hwa_verrou.owner.compare_exchange_strong(
                 expect, me, std::memory_order_acquire, std::memory_order_relaxed);
             if (dispute) hwa_attendre(me);
             g_hwa.depth = 1;
-            g_hwa.holder = hwa_guest_tid();
+            // Temoin seulement (croise) : une lecture TLS par prise du verrou sur un fil heberge. BO2_HWA_TEMOINS=1.
+            if (__builtin_expect(g_hwa_lu.temoins, 0)) g_hwa.holder = hwa_guest_tid();
             if (dispute) ++g_hwa.contended;
             if (bo2_c33_off == 0) c33_herite_entrer();   // C33
         }
@@ -38182,6 +38652,7 @@ static inline void c33_herite_entrer() {
     }
     return mem;
 }
+#endif   // __ANDROID__ (rayures) / verrou global
 // 🔴 P624 — IL N'AVAIT AUCUN SITE D'APPEL. `g_hwa.enter` / `g_hwa.contended`
 // s'incrementaient a chaque instruction verrouillee invitee et n'etaient JAMAIS
 // lus : un compteur qui coute sans rien rapporter. Il est desormais appele dans
@@ -38190,6 +38661,23 @@ static inline void c33_herite_entrer() {
 // de « la sonde s'est tue ».
 extern "C" void bo2_hw_atomic_report(const char* why) {
     const int mode = hw_atomics_mode();
+#if defined(__ANDROID__)
+    {
+        uint64_t e = 0, c = 0, t = 0, d[4] = {};
+        uint32_t n = 0;
+        for (const HwaFil& f : g_hwa_fils) {
+            if (!f.tp.load(std::memory_order_relaxed)) continue;
+            ++n; e += f.enter; c += f.contended; t += f.toutes;
+            for (int k = 0; k < 4; ++k) d[k] += f.differe[k];
+        }
+        fprintf(stderr, "[HW-ATOMIC] %s — mode=%d rayures=%u fils=%u sequences=%llu disputees=%llu toutes-rayures=%llu "
+                        "cedes=%llu differes cas=%llu hote=%llu ecr=%llu\n",
+                why ? why : "", mode, kRayures, n, (unsigned long long)e, (unsigned long long)c,
+                (unsigned long long)t, (unsigned long long)g_hwa_att.cedes.load(std::memory_order_relaxed),
+                (unsigned long long)d[HWA_D_CAS], (unsigned long long)d[HWA_D_HOTE], (unsigned long long)d[HWA_D_ECR]);
+        return;
+    }
+#endif
     fprintf(stderr, "[HW-ATOMIC] %s — mode=%d sequences=%llu contentions=%llu cedes=%llu c33_fils=%u c33_attentes=%llu%s\n",
             why ? why : "", mode,
             (unsigned long long)g_hwa.enter, (unsigned long long)g_hwa.contended,
@@ -38310,6 +38798,20 @@ extern "C" void bo2_c33_fermer(uint32_t* d) { __atomic_store_n(d, 0u, __ATOMIC_R
 // A spin writes nothing between retries (0x5b9e07: xor/mov/cmpxchg/cmp/jne);
 // those loops push return addresses and write state.
 extern "C" void win32_coop_yield_reason(const char* why);
+// Progress between two failed cmpxchg of a coroutine: anything it wrote. Off Android, g_guest_writes (every write
+// path bumps it). Android: the lifted code's writes are counted in the running coroutine's own State
+// (X86State::_padding, bumped after each write call site by scripts/fold/stream_scope_state.py, stored before the
+// compare-exchange call), and the runtime's C++ write paths still bump g_guest_writes; the sum is the signal.
+extern "C" State* win32_current_guest_state();
+static inline uint64_t cas_progress() {
+#if defined(__ANDROID__)
+    uint64_t c = 0;
+    if (State* s = win32_current_guest_state()) memcpy(&c, s->_padding, sizeof c);
+    return g_guest_writes + c;
+#else
+    return g_guest_writes;
+#endif
+}
 static void cas_spin_note(uint32_t a, bool failed) {
     static uint32_t last_a = 0; static int last_tid = -1; static uint32_t streak = 0;
     static uint64_t episodes = 0, yields = 0, w_at_fail = 0;
@@ -38356,8 +38858,9 @@ static void cas_spin_note(uint32_t a, bool failed) {
     if (__builtin_expect(g_any_hosted, 0) && !w32_on_sched_thread()) return;
     const int tid = win32_current_tid();
     if (!failed) { if (tid == last_tid && a == last_a) streak = 0; return; }
-    if (tid != last_tid || a != last_a || g_guest_writes != w_at_fail) { last_tid = tid; last_a = a; streak = 0; }
-    w_at_fail = g_guest_writes;
+    const uint64_t prog = cas_progress();
+    if (tid != last_tid || a != last_a || prog != w_at_fail) { last_tid = tid; last_a = a; streak = 0; }
+    w_at_fail = prog;
     if (++streak < 8) return;
     if (streak == 8) {
         ++episodes;
@@ -38371,7 +38874,7 @@ static void cas_spin_note(uint32_t a, bool failed) {
     if (!hwa_defer(HWA_D_CAS)) win32_coop_yield_reason("cas-spin");
     // the yield ran other coroutines; this streak stays ours (static state is
     // shared, so re-claim it — and the write count — for the retry that follows)
-    last_tid = tid; last_a = a; w_at_fail = g_guest_writes;
+    last_tid = tid; last_a = a; w_at_fail = cas_progress();
 }
 [[gnu::used]] void* __remill_compare_exchange_memory_32(void* m, uint32_t a, uint32_t& expected, uint32_t desired) {
     // ⚠️ cas_spin_note DOIT rester appele sur les deux branches : c'est le

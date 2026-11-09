@@ -77,7 +77,7 @@ def demo():
            '  ret ptr %memory\n', '}\n']
     out = ''.join(fold(src))
     assert fold.stats == dict(reads=1, flags=1, subs=1, retargeted=2), fold.stats
-    assert 'arm64-apple' in out and 'local_unnamed_addr noinline {' in out and '%2 = or i1 false, false' in out
+    assert bootpy._ARM64_TRIPLE in out and 'local_unnamed_addr noinline {' in out and '%2 = or i1 false, false' in out
     assert 'define internal i32 @__remill_read_memory_32(' in out and 'declare dso_local i32 @__remill_read_memory_32(' not in out
     assert '__remill_read_memory_32_slow' in out and 'g_park_pending' in out
     print('auto-contrôle OK')

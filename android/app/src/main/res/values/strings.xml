@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BO2 (personal build)</string>
+
+    <string name="setup_title">Black Ops II</string>
+    <string name="setup_pick">Choose the game folder</string>
+    <string name="setup_start">Play</string>
+    <string name="setup_reimport">Import again</string>
+    <string name="setup_not_bo2">That folder does not look like a Black Ops II install: %1$s is missing.</string>
+    <string name="setup_copying">Copying %1$s</string>
+    <string name="setup_done">Imported %1$d files (%2$s).</string>
+    <string name="setup_failed">The copy stopped: %1$s</string>
+    <string name="setup_core_missing">No game core yet. Build it on your PC from your own copy (scripts/package-game.sh) and put libbo2core.so in the folder you import. Until then, Play opens the controls and device test screen.</string>
+    <string name="setup_device">Device</string>
+    <string name="launcher_data">Game data</string>
+    <string name="launcher_ready">Ready</string>
+    <string name="launcher_missing">Not imported. Copy your Steam Black Ops II folder to the phone, then choose it here.</string>
+    <string name="launcher_graphics">Graphics</string>
+    <string name="launcher_controls">Controls</string>
+    <string name="launcher_preset">Detail</string>
+    <string name="launcher_resolution">Resolution</string>
+    <string name="launcher_upscaler">Upscaler</string>
+    <string name="launcher_power_note">A lower resolution with SGSR saves the most battery and heat.</string>
+    <string name="launcher_screen">Screen</string>
+    <string name="launcher_cap">Frame rate cap</string>
+    <string name="launcher_fov">Field of view</string>
+    <string name="launcher_view">View distance</string>
+    <string name="launcher_view_note">Past it the game\'s fog turns solid and it skips drawing (and working out) everything beyond. Nearer saves the most on big open maps; never further than the map\'s own fog.</string>
+    <string name="launcher_touch">Touch controls</string>
+    <string name="launcher_look">Look</string>
+    <string name="launcher_auto_sprint">Auto-sprint</string>
+    <string name="launcher_diagnostics">Diagnostics</string>
+    <string name="launcher_logging">Logging</string>
+    <string-array name="launcher_logging_values">
+        <item>Full (profiler, PC log)</item>
+        <item>Normal (PC log)</item>
+        <item>Minimal (crash log only)</item>
+    </string-array>
+    <string name="launcher_logging_note">The profiler interrupts the busiest threads a thousand times a second. Minimal also stops copying the log to logcat and to the PC. Crash reports work at every level.</string>
+    <string name="launcher_version">Version %1$s</string>
+    <string name="cancel">Cancel</string>
+
+    <!-- Updater.java: builds from bo2-logd on the developer's PC, over Tailscale. -->
+    <string name="update_title">Update from your PC</string>
+    <string name="update_offer">Build %1$s is on your PC (%2$d MB). Download and install it?</string>
+    <string name="update_not_now">Not now</string>
+    <string name="update_install">Update</string>
+    <string name="update_permission">To install builds from your PC, Android needs this app to be allowed to install apps. Settings opens now: allow it, come back, and the update starts.</string>
+    <string name="update_open_settings">Open settings</string>
+    <string name="update_downloading">Downloading build %1$s</string>
+    <string name="update_progress">%1$d of %2$d MB</string>
+    <string name="update_checking">Checking: %1$d of %2$d MB</string>
+    <string name="update_installing">Handing it to the Android installer…</string>
+    <string name="update_mismatch">the download does not match the build on the PC (sha256); try again</string>
+    <string name="update_failed">The update stopped: %1$s</string>
+    <string name="core_title">Game core from your PC</string>
+    <string name="core_offer_missing">Your PC has your game core, built from your own copy (%1$s, %2$d MB to download). The app needs it to play. Download it now?</string>
+    <string name="core_offer_newer">A newer game core is on your PC (%1$s, %2$d MB to download). Download it?</string>
+    <string name="core_download">Download</string>
+    <string name="core_downloading">Downloading game core %1$s</string>
+    <string name="core_unpacking">Unpacking: %1$d of %2$d MB</string>
+
+    <string name="menu_resume">Resume</string>
+    <string name="menu_screen">Screen: %1$s</string>
+    <string name="menu_resolution">Resolution: %1$s</string>
+    <string name="display_fill">fill the screen</string>
+    <string name="display_16_9">16:9 with bars</string>
+    <string name="display_native">native</string>
+    <string name="menu_graphics">Graphics: %1$s, %2$s</string>
+    <string name="menu_graphics_title">Graphics</string>
+    <string name="gfx_preset">Preset: %1$s</string>
+    <string name="gfx_cap">Frame cap: %1$s</string>
+    <string name="gfx_fov">Field of view: %1$s</string>
+    <string name="gfx_upscaler">Upscaler: %1$s</string>
+    <string name="gfx_upscaler_sgsr">SGSR (sharp, for a lower resolution)</string>
+    <string name="gfx_upscaler_off">Bilinear (soft)</string>
+    <string name="gfx_view">View distance: %1$s</string>
+    <string name="gfx_view_map">Map\'s own</string>
+    <string name="gfx_advanced">Advanced settings…</string>
+    <string name="gfx_low">Low (cool and steady)</string>
+    <string name="gfx_medium">Medium</string>
+    <string name="gfx_high">High</string>
+    <string name="gfx_own">The game\'s own settings</string>
+    <string name="gfx_custom">Custom</string>
+    <string name="gfx_uncapped">uncapped</string>
+    <string name="gfx_game">game\'s own</string>
+    <string name="gfx_shadows">Shadows</string>
+    <string name="gfx_ssao">Ambient occlusion</string>
+    <string name="gfx_dof">Depth of field</string>
+    <string name="gfx_fxaa">FXAA</string>
+    <string name="gfx_msaa">MSAA</string>
+    <string name="gfx_textures">Textures</string>
+    <string name="gfx_aniso">Anisotropic filtering</string>
+    <string name="gfx_decals">Decals</string>
+    <string-array name="gfx_shadow_values">
+        <item>off</item>
+        <item>sun, quarter resolution</item>
+        <item>full</item>
+    </string-array>
+    <string-array name="gfx_texture_values">
+        <item>high</item>
+        <item>medium</item>
+        <item>low</item>
+    </string-array>
+    <string name="setup_display">Screen: %1$d×%2$d, the game renders %3$d×%4$d.</string>
+    <string name="menu_edit_controls">Edit touch controls</string>
+    <string name="menu_hide_controls">Hide touch controls</string>
+    <string name="menu_show_controls">Show touch controls</string>
+    <string name="menu_look">Look: %1$s</string>
+    <string name="menu_look_swipe">swipe</string>
+    <string name="menu_look_stick">stick</string>
+    <string name="menu_look_speed">Look speed: %1$s</string>
+    <string name="menu_auto_sprint">Auto-sprint: %1$s</string>
+    <string name="menu_opacity">Controls opacity: %1$d%%</string>
+    <string name="menu_share_log">Share this run\'s log</string>
+    <string name="menu_quit">Quit</string>
+    <string name="menu_back">Back</string>
+    <string name="on">on</string>
+    <string name="off">off</string>
+
+    <string name="edit_hint">Drag a control to move it</string>
+    <string name="edit_selected">%1$s</string>
+    <string name="edit_size">Size</string>
+    <string name="edit_opacity">Opacity (all)</string>
+    <string name="edit_reset">Reset all</string>
+    <string name="edit_done">Done</string>
+
+    <string name="crash_title">The last run ended badly</string>
+    <string name="crash_message">Its log can be shared to work out why.</string>
+    <string name="crash_continue">Continue</string>
+    <string name="log_share">Share log</string>
+    <string name="log_copy">Copy</string>
+    <string name="log_copied">Log copied</string>
+    <string name="log_subject">BO2 Android log</string>
+</resources>

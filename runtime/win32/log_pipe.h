@@ -20,6 +20,11 @@
 #include <unistd.h>
 
 inline void bo2_journal_par_tube() {
+#if defined(__ANDROID__) || defined(BO2_HARNESS)   // BO2_HARNESS: Bo2-APK's Linux test harness, same relay
+    // Android : le shell (log.cpp) lit deja stderr par un tube et un fil, vers logcat et le fichier du run. Il n'y a ni
+    // /bin/cat ni posix_spawn_file_actions_addinherit_np : rien a decoupler ici.
+    return;
+#else
     struct stat s2 {}, s1 {};
     if (fstat(2, &s2) != 0 || !S_ISREG(s2.st_mode)) return;          // terminal ou tube : rien a decoupler
     if (const char* e = getenv("BO2_JOURNAL_DIRECT"); e && atoi(e) > 0) {
@@ -56,4 +61,5 @@ inline void bo2_journal_par_tube() {
     close(sv[1]);
     fprintf(stderr, "[JOURNAL] par tube : cat pid=%d, tampon %d octets%s\n", (int)pid, tampon,
             meme_sortie ? ", stdout aussi" : "");
+#endif
 }

@@ -1,0 +1,22 @@
+[package]
+name = "bo2-pass"
+version = "0.1.0"
+edition = "2021"
+description = "LLVM 17 new-PM pass plugin for the Android fold of bo2-mac (prototype): State register promotion."
+license = "GPL-3.0-or-later"
+publish = false
+
+[lib]
+name = "bo2_pass"
+crate-type = ["cdylib"]
+
+[dependencies]
+# New-PM plugin glue (module pass, pipeline-name registration) on top of inkwell. llvm17-0 turns on
+# inkwell/llvm17-0-no-llvm-linking: the plugin is loaded into `opt`, which provides the LLVM symbols.
+llvm-plugin = { version = "0.6", default-features = false, features = ["macros", "llvm17-0"] }
+# The LLVM C API, for what inkwell does not expose (use lists, GEP source types, data-layout offsets, MD nodes).
+llvm-sys = { version = "170", features = ["no-llvm-linking"] }
+
+[profile.release]
+opt-level = 2
+debug = false

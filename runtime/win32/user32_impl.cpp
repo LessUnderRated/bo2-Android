@@ -22,7 +22,26 @@
 #include <cstdlib>
 #include <cmath>
 #include <ctime>
+#if defined(__APPLE__)
 #include <ApplicationServices/ApplicationServices.h>
+#else
+#include "bo2_platform.h"   // CLOCK_UPTIME_RAW, clock_gettime_nsec_np
+// Android : la geometrie CoreGraphics dont ce fichier se sert, et le pointeur par le backend Android (SDL). La fenetre
+// y couvre l'ecran, donc ses coordonnees sont celles de l'ecran, comme les points globaux de CG sur Mac.
+struct CGPoint { double x, y; };
+struct CGSize { double width, height; };
+struct CGRect { CGPoint origin; CGSize size; };
+static inline CGPoint CGPointMake(double x, double y) { return CGPoint{x, y}; }
+static inline CGRect CGRectMake(double x, double y, double w, double h) { return CGRect{{x, y}, {w, h}}; }
+typedef uint32_t CGDisplayCount;
+typedef int CGError;
+enum { kCGErrorSuccess = 0 };
+static inline CGError CGGetActiveDisplayList(uint32_t, void*, CGDisplayCount* n) { if (n) *n = 1; return 0; }
+extern "C" void gfx_cursor_location(double* x, double* y);   // backend Android : position du pointeur
+extern "C" int gfx_cursor_warp(double x, double y);           // backend Android : 0 si le pointeur a ete deplace
+static inline CGError CGWarpMouseCursorPosition(CGPoint p) { return gfx_cursor_warp(p.x, p.y) ? 1 : 0; }
+static inline CGError CGAssociateMouseAndMouseCursorPosition(bool) { return kCGErrorSuccess; }
+#endif
 
 // Real window-server focus, published by metal_backend.mm unmasked by
 // BO2_FORCE_FOCUS. The cursor recentring must obey this, never the forced lie.
@@ -516,10 +535,14 @@ static bool   g_visee = false, g_lu_bouge = false;
 static int    g_sans_reponse = 0;
 
 static void cursor_real(double& x, double& y) {
+#if defined(__APPLE__)
     CGEventRef e = CGEventCreate(nullptr);
     CGPoint loc = CGEventGetLocation(e);
     CFRelease(e);
     x = loc.x; y = loc.y;
+#else
+    gfx_cursor_location(&x, &y);
+#endif
 }
 
 // Témoin du pointeur tenu (le testeur, 2026-10-10 : « invisible, mais il bloque toujours aux bords de l'écran »). Il ne

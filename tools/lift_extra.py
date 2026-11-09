@@ -45,7 +45,11 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 WORKDIR = os.environ.get("LIFT_WIP", os.path.join(ROOT, "boot_cache", "lift_wip"))  # construire_objets.py : un par tranche
-LLVM17 = os.environ.get("LLVM17", "/opt/homebrew/opt/llvm@17")
+LLVM17 = os.environ.get("LLVM17", os.environ.get("LLVM17_PREFIX", "/opt/homebrew/opt/llvm@17"))
+# BO2_ANDROID=1: objects for aarch64-linux-android33 (ELF), merged with lld (as tools/boot.py).
+ANDROID = os.environ.get("BO2_ANDROID") == "1"
+CLANG_TARGET = ["--target=aarch64-linux-android33"] if ANDROID else ["-arch", "arm64"]
+LD_R = [f"{LLVM17}/bin/ld.lld", "-r"] if ANDROID else ["ld", "-r", "-arch", "arm64"]
 
 
 def read_list(path):
@@ -144,7 +148,7 @@ def _ld_r(out, objs):
     single merge of thousands of objects is slow, so fold in batches."""
     CHUNK = 400
     if len(objs) <= CHUNK:
-        r = subprocess.run(["ld", "-r", "-arch", "arm64", "-o", out] + objs,
+        r = subprocess.run(LD_R + ["-o", out] + objs,
                            capture_output=True, text=True)
         if r.returncode != 0:
             raise RuntimeError("ld -r failed: " + r.stderr.strip()[:400])
@@ -170,7 +174,7 @@ def build_obj(done, obj_path):
             continue
         seen.add(va)
         part = f"{obj_path}.part_{va:x}.o"
-        r = subprocess.run([f"{LLVM17}/bin/clang", "-arch", "arm64", "-c", "-O1",
+        r = subprocess.run([f"{LLVM17}/bin/clang", *CLANG_TARGET, "-c", "-O1",
                             "-x", "ir", bc, "-o", part],
                            capture_output=True, text=True)
         if r.returncode != 0:

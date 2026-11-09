@@ -637,6 +637,7 @@ struct GfxDraw {
     uint32_t dsv_res, dsv_wh;           // BO2_DEPTH_DSV: depth resource behind the bound DSV and its size, voir le producteur
     int32_t zb; float zb_pente, zb_max; // BO2_DEPTH_BIAS: DepthBias, SlopeScaledDepthBias, DepthBiasClamp, voir le producteur
     uint32_t psmip[kMaxPSTex];          // niveaux de la SRV par slot (MostDetailedMip << 8 | MipLevels), voir le producteur
+    const void* ib_res; uint32_t ib_res_bytes;   // BO2_IB_RESIDENT (Android only; always null here), voir le producteur
 };
 
 // 🎯 LE CONTROLE DE TAILLE CROISE. Le producteur exporte sizeof(GfxDraw) tel

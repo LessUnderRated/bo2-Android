@@ -12,7 +12,13 @@
 // producer is one guest thread, the consumer is CoreAudio's callback thread, and
 // at 48 kHz stereo the contention is a few hundred microseconds a second. A
 // clever structure here would buy nothing and could hide a real ordering bug.
+#if defined(__APPLE__)
 #include <AudioToolbox/AudioToolbox.h>
+#else
+// Android: the device is an AAudio stream (NDK, API 26+; the 5.1 channel mask needs API 32). Its data callback pulls
+// at the hardware rate exactly as an AudioQueue does, so the ring, the accounting and the engine clock are unchanged.
+#include <aaudio/AAudio.h>
+#endif
 #include "../win32/bo2_getenv.h"
 #include <atomic>
 #include <chrono>
@@ -32,8 +38,12 @@ constexpr int kFrames     = 1024;          // per AudioQueue buffer
 std::mutex            g_mu;
 std::vector<uint8_t>  g_ring;              // PCM waiting to be played
 size_t                g_ring_rd = 0;
+#if defined(__APPLE__)
 AudioQueueRef         g_queue   = nullptr;
 AudioQueueBufferRef   g_bufs[kNumBuffers] = {};
+#else
+AAudioStream*         g_queue   = nullptr;  // the open device, as g_queue is on macOS
+#endif
 int      g_channels = 2, g_rate = 48000, g_bits = 16;
 bool     g_started  = false;
 uint64_t g_submitted = 0, g_played = 0, g_starved = 0, g_dropped = 0;
@@ -70,6 +80,24 @@ uint32_t drain_locked(uint8_t* dst, uint32_t want) {
     }
     g_played += got;
     if (got < want) g_starved++;
+#if defined(__ANDROID__)
+    // [AUDIO] every 500 device callbacks (10 s at 960 frames): how often the ring ran dry, and how low it got before a
+    // drain, in milliseconds of audio. Read in the remote session log (stutter diagnosis with no adb).
+    {
+        static uint32_t n = 0, short_n = 0;
+        static size_t low = SIZE_MAX;
+        ++n;
+        if (got < want) ++short_n;
+        if (avail < low) low = avail;
+        if (n >= 500 && dst) {
+            const double ms_per_byte = 1000.0 / ((double)g_rate * (double)frame_bytes());
+            fprintf(stderr, "[AUDIO] %u callbacks: %u came up short, lowest ring %.1f ms before a drain, %llu starved in all\n",
+                    n, short_n, low == SIZE_MAX ? 0.0 : low * ms_per_byte, (unsigned long long)g_starved);
+            n = short_n = 0;
+            low = SIZE_MAX;
+        }
+    }
+#endif
     return got;
 }
 
@@ -105,6 +133,7 @@ uint32_t drain_locked(uint8_t* dst, uint32_t want) {
 // by default, so `BO2_MUTE=0` has to be a real way to turn the sound back on.
 static const int g_mute = bo2_getenv("BO2_MUTE") ? atoi(bo2_getenv("BO2_MUTE")) : 0;
 
+#if defined(__APPLE__)
 void queue_cb(void*, AudioQueueRef q, AudioQueueBufferRef buf) {
     const uint32_t want = buf->mAudioDataBytesCapacity;
     uint32_t got = drain_locked((uint8_t*)buf->mAudioData, want);
@@ -127,6 +156,77 @@ void queue_cb(void*, AudioQueueRef q, AudioQueueBufferRef buf) {
                     (unsigned long long)g_played, (unsigned long long)g_starved);
     }
 }
+#else
+// The AAudio data callback: the same drain, silence fill and mute as queue_cb, on AAudio's own thread. Bursts are
+// smaller than a 1024-frame AudioQueue buffer, so g_played advances in finer steps, at the same rate.
+// Android downmix: the game's mix bus is 6 channels (FL FR C LFE BL BR, hard-coded in its XAudio2 init), and a phone
+// has two speakers. Opening the device as 5.1 made AAudio carry 6 channels and AudioFlinger fold them for us; here the
+// stream is opened as stereo and the fold happens in this callback (-3 dB centre and surrounds, -6 dB LFE, clamped),
+// a third of the bytes through the audio path. The ring still holds the guest's 6-channel frames, so the engine's
+// clock (g_played, in guest bytes) is unchanged. BO2_AUDIO_DOWNMIX=0 opens the device as 5.1, as before.
+// What the device was opened with (2 when folding a 6-channel guest stream). Set BEFORE requestStart: the callback
+// sizes its writes by it, and a 6-channel write into a 2-channel buffer would overrun it.
+std::atomic<int> g_out_channels{0};
+bool downmix_wanted() {
+    static const bool on = [] {
+        const char* e = bo2_getenv("BO2_AUDIO_DOWNMIX");
+        return !(e && atoi(e) == 0);
+    }();
+    return on;
+}
+aaudio_data_callback_result_t aaudio_cb(AAudioStream*, void*, void* data, int32_t frames) {
+    const uint32_t want = (uint32_t)frames * (uint32_t)frame_bytes();
+    if (g_out_channels.load(std::memory_order_relaxed) == 2 && g_channels == 6 && g_bits == 32) {
+        static std::vector<float> six;   // AAudio's callback thread only
+        six.resize((size_t)frames * 6);
+        uint32_t got = drain_locked((uint8_t*)six.data(), want);
+        if (got < want) memset((uint8_t*)six.data() + got, 0, want - got);
+        float* out = (float*)data;
+        if (g_mute) {
+            memset(out, 0, (size_t)frames * 2 * sizeof(float));
+        } else {
+            const float k3 = 0.70710678f, k6 = 0.5f;
+            for (int32_t i = 0; i < frames; i++) {
+                const float* f = &six[(size_t)i * 6];
+                const float c = k3 * f[2] + k6 * f[3];
+                float l = f[0] + c + k3 * f[4], r = f[1] + c + k3 * f[5];
+                out[2 * i] = l > 1.f ? 1.f : (l < -1.f ? -1.f : l);
+                out[2 * i + 1] = r > 1.f ? 1.f : (r < -1.f ? -1.f : r);
+            }
+        }
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
+    uint32_t got = drain_locked((uint8_t*)data, want);
+    if (got < want) memset((uint8_t*)data + got, 0, want - got);
+    if (g_mute) memset(data, 0, want);
+    if (bo2_getenv("BO2_AUDIO_LOG")) {
+        static uint64_t cb = 0;
+        if (++cb <= 4 || (cb % 2000) == 0)
+            fprintf(stderr, "[AUDIO] aaudio cb #%llu got=%u/%u played=%llu starved=%llu\n",
+                    (unsigned long long)cb, got, want,
+                    (unsigned long long)g_played, (unsigned long long)g_starved);
+    }
+    return AAUDIO_CALLBACK_RESULT_CONTINUE;
+}
+bool aaudio_open();
+bool start_silent_fallback();
+// A route change (headphones, Bluetooth) disconnects the stream and its callback stops. The engine clock IS the drain
+// count, so a dead stream freezes the game: reopen it. AAudio forbids closing a stream from its own callback, hence the
+// thread. If no new stream opens, the paced silent clock takes over, as when the device refuses to start.
+void aaudio_error_cb(AAudioStream*, void*, aaudio_result_t err) {
+    fprintf(stderr, "[AUDIO] AAudio stream error %d (%s): reopening\n", (int)err, AAudio_convertResultToText(err));
+    std::thread([] {
+        AAudioStream* old;
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            old = g_queue;
+            g_queue = nullptr;
+        }
+        if (old) { AAudioStream_requestStop(old); AAudioStream_close(old); }
+        if (!aaudio_open()) start_silent_fallback();
+    }).detach();
+}
+#endif
 
 // --- the device is not the only thing that can stop the engine ---------------
 // THE ENGINE'S CLOCK IS THE AUDIO BUFFER-COMPLETION COUNT (bo2_audio_take_
@@ -176,6 +276,11 @@ bool ensure_queue() {
                         "use BO2_MUTE=1 for silence.\n");
         return start_silent_fallback();
     }
+#if !defined(__APPLE__)
+    if (!aaudio_open()) return start_silent_fallback();
+    g_started = true;
+    return true;
+#else
     AudioStreamBasicDescription f = {};
     f.mSampleRate       = g_rate;
     f.mFormatID         = kAudioFormatLinearPCM;
@@ -226,7 +331,93 @@ bool ensure_queue() {
     fprintf(stderr, "[AUDIO] CoreAudio output started: %d ch, %d Hz, %d-bit %s\n",
             g_channels, g_rate, g_bits, g_bits == 32 ? "float" : "int");
     return true;
+#endif
 }
+
+#if !defined(__APPLE__)
+// Open and start the AAudio stream in the guest's format. 32-bit XAudio2 audio is float (see the macOS comment above);
+// 6 channels are WAVE's FL FR C LFE BL BR, which is AAudio's 5.1 mask, so Android folds them to the phone's speakers
+// the way XAudio2 folds the game's 5.1 voice to a stereo master (P807).
+bool aaudio_open() {
+    AAudioStreamBuilder* b = nullptr;
+    if (AAudio_createStreamBuilder(&b) != AAUDIO_OK || !b) {
+        fprintf(stderr, "[AUDIO] AAudio_createStreamBuilder failed\n");
+        return false;
+    }
+    AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
+    AAudioStreamBuilder_setSampleRate(b, g_rate);
+    AAudioStreamBuilder_setFormat(b, g_bits == 32 ? AAUDIO_FORMAT_PCM_FLOAT : AAUDIO_FORMAT_PCM_I16);
+    const bool fold = g_channels == 6 && g_bits == 32 && downmix_wanted();
+    const int out_ch = fold ? 2 : g_channels;
+    if (fold) AAudioStreamBuilder_setChannelCount(b, 2);
+    else if (g_channels == 6) AAudioStreamBuilder_setChannelMask(b, AAUDIO_CHANNEL_5POINT1);
+    else AAudioStreamBuilder_setChannelCount(b, g_channels);
+    // Normal, not low latency. The game mixes on its own thread and hands over whole buffers; a low-latency stream
+    // pulls 96 frames (2 ms) at a time and stutters on any hiccup of the mixer. That is what the S26 did once the
+    // stream became stereo (r9): with 6 channels Android had never granted low latency, so the request was moot, and
+    // the stream ran normal, 960-frame bursts. BO2_AUDIO_PERF: low | normal (default) | power (deep buffer: fewer,
+    // larger bursts, fewer wakeups, more latency).
+    {
+        const char* p = bo2_getenv("BO2_AUDIO_PERF");
+        const aaudio_performance_mode_t mode = p && !strcmp(p, "low") ? AAUDIO_PERFORMANCE_MODE_LOW_LATENCY
+                                             : p && !strcmp(p, "power") ? AAUDIO_PERFORMANCE_MODE_POWER_SAVING
+                                                                        : AAUDIO_PERFORMANCE_MODE_NONE;
+        AAudioStreamBuilder_setPerformanceMode(b, mode);
+    }
+    // A fixed callback size, 960 frames (20 ms, what the 6-channel stream ran at in r7, clean). The engine's audio
+    // clock is the drain count and the game keeps only a short queue of mix buffers: in normal mode the stereo stream
+    // was routed to a deep buffer that drained 2605 frames (54 ms) per callback, the queue could not stay ahead, and
+    // each gulp came back partly silent (stutter on the S26, menu music). AAudio buffers underneath instead.
+    // BO2_AUDIO_CB_FRAMES overrides (0: whatever the device picks).
+    {
+        const char* f = bo2_getenv("BO2_AUDIO_CB_FRAMES");
+        const int frames = f ? atoi(f) : 960;
+        if (frames > 0) AAudioStreamBuilder_setFramesPerDataCallback(b, frames);
+    }
+    AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+    AAudioStreamBuilder_setUsage(b, AAUDIO_USAGE_GAME);
+    AAudioStreamBuilder_setContentType(b, AAUDIO_CONTENT_TYPE_MOVIE);
+    AAudioStreamBuilder_setDataCallback(b, aaudio_cb, nullptr);
+    AAudioStreamBuilder_setErrorCallback(b, aaudio_error_cb, nullptr);
+    AAudioStream* s = nullptr;
+    const aaudio_result_t r = AAudioStreamBuilder_openStream(b, &s);
+    AAudioStreamBuilder_delete(b);
+    if (r != AAUDIO_OK || !s) {
+        fprintf(stderr, "[AUDIO] AAudio openStream failed (%dch %dHz %dbit): %s\n", g_channels, g_rate, g_bits,
+                AAudio_convertResultToText(r));
+        return false;
+    }
+    // AAudio may open a different format than asked (a rate it resamples is fine; a channel count or sample format
+    // it changed is not, because the ring holds the guest's own frames). Refuse rather than play garbage.
+    const int ch = AAudioStream_getChannelCount(s), rate = AAudioStream_getSampleRate(s);
+    const aaudio_format_t fmt = AAudioStream_getFormat(s);
+    const aaudio_format_t want = g_bits == 32 ? AAUDIO_FORMAT_PCM_FLOAT : AAUDIO_FORMAT_PCM_I16;
+    if (ch != out_ch || fmt != want || rate != g_rate) {
+        fprintf(stderr, "[AUDIO] AAudio opened %dch %dHz format %d, not the asked %dch %dHz %dbit: refused\n", ch,
+                rate, (int)fmt, out_ch, g_rate, g_bits);
+        AAudioStream_close(s);
+        return false;
+    }
+    g_out_channels.store(out_ch);
+    const aaudio_result_t st = AAudioStream_requestStart(s);
+    if (st != AAUDIO_OK) {   // a failed start is silent, as on macOS: check it
+        fprintf(stderr, "[AUDIO] AAudio requestStart failed: %s\n", AAudio_convertResultToText(st));
+        AAudioStream_close(s);
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        g_queue = s;
+    }
+    fprintf(stderr, "[AUDIO] AAudio output started: %d ch%s, %d Hz, %d-bit %s, %d frames per callback, %s\n", g_channels,
+            fold ? " folded to 2 (BO2_AUDIO_DOWNMIX)" : "", g_rate, g_bits, g_bits == 32 ? "float" : "int",
+            AAudioStream_getFramesPerDataCallback(s) > 0 ? AAudioStream_getFramesPerDataCallback(s)
+                                                          : AAudioStream_getFramesPerBurst(s),
+            AAudioStream_getPerformanceMode(s) == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY ? "low latency"
+            : AAudioStream_getPerformanceMode(s) == AAUDIO_PERFORMANCE_MODE_POWER_SAVING ? "power saving" : "normal");
+    return true;
+}
+#endif
 
 // The fallback pump. One host thread, absolute schedule (never `sleep(period)`
 // in a loop — that accumulates the wakeup latency and would make the clock run

@@ -10,3 +10,21 @@ pe_sections.bin
 tools/remill-src/
 tools/oat-src/
 runtime/win32/snd_reverb_gen.inc
+
+# The Android port: never game files, extracted assets or anything lifted from them; the player supplies the game.
+*.exe
+*.dll
+*.ff
+*.ipak
+*.xpak
+*.sabs
+*.sabl
+/game/
+*.unpacked.exe
+*.bc
+*.ll
+# The game core built from the player's own exe (scripts/package-game.sh): never in the repo or a release.
+libbo2core.so
+# Machine paths for scripts/env.sh, and its default work directory (captures, symbols, published builds)
+scripts/env.local.sh
+/work/
