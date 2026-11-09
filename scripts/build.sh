@@ -29,32 +29,34 @@ while [ $# -gt 0 ]; do
 done
 
 W="$BO2_WSL_CHECKOUT/boot_cache/zms"
+# The same paths quoted for the WSL command lines below (bo2_q, env.sh): the repo's path may hold spaces.
+QR=$(bo2_q "$BO2_REPO_WSL") QC=$(bo2_q "$BO2_WSL_CHECKOUT") QN=$(bo2_q "$BO2_NDK_WSL") QW=$(bo2_q "$W")
 # The WSL lift checkout: a clone of this repo's android branch, made on first use and brought up to date before each
 # stage (committed work only: commit before building).
 pull_bo2mac() {
-    bo2_linux "[ -d $BO2_WSL_CHECKOUT/.git ] || git clone -q -b android $BO2_REPO_WSL $BO2_WSL_CHECKOUT" ||
+    bo2_linux "[ -d $QC/.git ] || git clone -q -b android $QR $QC" ||
         bo2_die "could not clone $BO2_REPO_WSL into $BO2_WSL_CHECKOUT"
-    bo2_linux "cd $BO2_WSL_CHECKOUT && git pull -q $BO2_REPO_WSL android && git log --oneline -1" ||
+    bo2_linux "cd $QC && git pull -q $QR android && git log --oneline -1" ||
         bo2_die "could not pull $BO2_REPO_WSL android into $BO2_WSL_CHECKOUT"
 }
 
 if [ "$RELIFT" = 1 ]; then
     pull_bo2mac
     bo2_say "relift (lift, fold, native, finish)"
-    bo2_linux "rm -f $W/.lifted $W/.folded && BO2_FOLD_PASS=${BO2_FOLD_PASS:-0} bash $BO2_REPO_WSL/scripts/lift-android.sh $BO2_WSL_CHECKOUT > \$HOME/lift-android.log 2>&1" ||
+    bo2_linux "rm -f $QW/.lifted $QW/.folded && BO2_FOLD_PASS=${BO2_FOLD_PASS:-0} bash $QR/scripts/lift-android.sh $QC > \$HOME/lift-android.log 2>&1" ||
         { bo2_linux "tail -5 \$HOME/lift-android.log"; bo2_die "relift (see ~/lift-android.log in WSL)"; }
     bo2_linux "tail -1 \$HOME/lift-android.log"
 elif [ "$FOLD" = 1 ]; then
     pull_bo2mac
-    bo2_linux "ls $W/batch_0.bc > /dev/null 2>&1" || bo2_die "no kept slices in $W: run --relift once"
+    bo2_linux "ls $QW/batch_0.bc > /dev/null 2>&1" || bo2_die "no kept slices in $W: run --relift once"
     bo2_say "refold (fold, native, finish)"
-    bo2_linux "rm -f $W/.folded && for s in fold native finish; do BO2_FOLD_PASS=${BO2_FOLD_PASS:-0} bash $BO2_REPO_WSL/scripts/lift-android.sh $BO2_WSL_CHECKOUT \$s || exit 1; done > \$HOME/lift-android.log 2>&1" ||
+    bo2_linux "rm -f $QW/.folded && for s in fold native finish; do BO2_FOLD_PASS=${BO2_FOLD_PASS:-0} bash $QR/scripts/lift-android.sh $QC \$s || exit 1; done > \$HOME/lift-android.log 2>&1" ||
         { bo2_linux "tail -5 \$HOME/lift-android.log"; bo2_die "refold (see ~/lift-android.log in WSL)"; }
 fi
 if [ "$PACKAGE" = 1 ]; then
     [ "$RELIFT" = 1 ] || [ "$FOLD" = 1 ] || pull_bo2mac
     bo2_say "package the game core"
-    bo2_linux "bash $BO2_REPO_WSL/scripts/package-game.sh $BO2_WSL_CHECKOUT $BO2_NDK_WSL $BO2_REPO_WSL/android/build/deps-arm64 $BO2_REPO_WSL/android/build/game > \$HOME/package.log 2>&1" ||
+    bo2_linux "bash $QR/scripts/package-game.sh $QC $QN $QR/android/build/deps-arm64 $QR/android/build/game > \$HOME/package.log 2>&1" ||
         { bo2_linux "grep -E 'error|FAILED' \$HOME/package.log | head; tail -3 \$HOME/package.log"; bo2_die "package (see ~/package.log in WSL)"; }
     bo2_linux "grep -E 'redirects:|x87' \$HOME/package.log | head -3; tail -1 \$HOME/package.log"
     # Which commit this core is (the updater shows it; the tree may have moved on by --publish).
@@ -78,11 +80,12 @@ if [ "$APK" = 1 ]; then
     # The unstripped library, by build id: the phone's [PROF] lines name their build, and
     # scripts/phone/symbolize-prof.sh finds the matching symbols here. The last five builds are kept.
     BO2_LIBMAIN=$(ls -t "$BO2_REPO"/android/app/build/intermediates/cxx/*/*/obj/arm64-v8a/libmain.so 2>/dev/null | head -1 || true)
-    BID=$(bo2_linux "$BO2_NDK_WSL/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -n $(bo2_wslpath "$BO2_LIBMAIN") | grep -o '[0-9a-f]\{40\}' | head -1" | tr -d '\r')
+    BID=$(bo2_linux "$QN/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -n $(bo2_q "$(bo2_wslpath "$BO2_LIBMAIN")") | grep -o '[0-9a-f]\{40\}' | head -1" | tr -d '\r')
     if [ -n "$BID" ]; then
         SYMS="$BO2_SYMBOLS"
         mkdir -p "$SYMS/$BID" && cp -f "$BO2_LIBMAIN" "$SYMS/$BID/libmain.so" && echo "$COMMIT" > "$SYMS/$BID/commit.txt"
-        ls -1dt "$SYMS"/*/ 2> /dev/null | tail -n +6 | xargs -r rm -rf
+        # One path per line (-d '\n'): a symbols folder whose path holds spaces must not be split into words for rm.
+        ls -1dt "$SYMS"/*/ 2> /dev/null | tail -n +6 | xargs -r -d '\n' rm -rf --
         echo "  symbols: $SYMS/$BID (commit $COMMIT, log server ${BO2_LOG_SERVER:-none})"
     fi
     # What this APK is, for --publish later (the tree may have moved on by then).

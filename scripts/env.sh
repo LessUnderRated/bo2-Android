@@ -24,6 +24,9 @@ esac
 bo2_wslpath() { echo "$1" | sed -E 's#^/([A-Za-z])/#/mnt/\L\1/#; s#^([A-Za-z]):/#/mnt/\L\1/#'; }
 # A path set once in env.local.sh, as this side sees it: Git Bash and WSL both source that file.
 bo2_here() { if [ "$BO2_ON_WINDOWS" = 1 ]; then echo "$1"; else bo2_wslpath "$1"; fi; }
+# A path quoted for a bo2_linux command line, so a folder with spaces (".../Call of Duty Black Ops II/...") stays one
+# word. A leading ~/ is left outside the quotes, so it still means the WSL home. (No path here holds a ' itself.)
+bo2_q() { case "$1" in "~/"*) printf "~/'%s'" "${1#\~/}" ;; *) printf "'%s'" "$1" ;; esac; }
 
 # Everything the scripts make outside the build trees: phone captures, archived symbols, published builds.
 BO2_WORK=$(bo2_here "${BO2_WORK:-$BO2_REPO/work}")

@@ -87,5 +87,5 @@ kill $LOGCAT 2>/dev/null
 } | tee summary.txt
 
 if [ "$REPORT" = 1 ] && [ -s perf.data ]; then
-    bo2_linux "bash $BO2_REPO_WSL/scripts/phone/report.sh '$NAME'"
+    bo2_linux "bash $(bo2_q "$BO2_REPO_WSL")/scripts/phone/report.sh '$NAME'"
 fi

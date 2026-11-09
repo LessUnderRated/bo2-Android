@@ -112,6 +112,10 @@ if [ "$PUSH" = 1 ]; then
         case "$name" in redist|__CommonRedist|_CommonRedist) continue ;; esac
         # Your SteamStub-unwrapped exes are inputs of the lift on this PC, not game data: they stay off the phone.
         case "$name" in *.unpacked.exe) echo "skipping $name (lift input, stays on this PC)"; continue ;; esac
+        # A source checkout kept in the game folder (this repo, say, under src/) is not game data either.
+        if [ -d "$entry" ] && { [ -e "$entry/.git" ] || compgen -G "$entry/*/.git" > /dev/null; }; then
+            echo "skipping $name (source code, not game data)"; continue
+        fi
         echo "pushing $name"
         "$ADB" push "$entry" "$DEST/" > /dev/null
     done

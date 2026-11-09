@@ -46,6 +46,11 @@ if (-not $NoData) {
     foreach ($entry in Get-ChildItem $Steam) {
         if ($entry.Name -in 'redist', '__CommonRedist', '_CommonRedist') { continue }
         if ($entry.Name -like '*.unpacked.exe') { Write-Host "skipping $($entry.Name) (lift input, stays on this PC)"; continue }
+        # A source checkout kept in the game folder (this repo, say, under src\) is not game data either.
+        if ($entry.PSIsContainer -and ((Test-Path (Join-Path $entry.FullName '.git')) -or
+                (Get-ChildItem $entry.FullName -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName '.git') }))) {
+            Write-Host "skipping $($entry.Name) (source code, not game data)"; continue
+        }
         Write-Host "pushing $($entry.Name)"
         & $adb push $entry.FullName "$dest/" | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "adb push $($entry.Name) failed" }

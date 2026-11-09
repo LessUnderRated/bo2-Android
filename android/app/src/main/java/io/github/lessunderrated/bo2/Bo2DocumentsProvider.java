@@ -22,7 +22,7 @@ import java.util.Locale;
  * The app's internal storage (logs/, the game's saves and config once it writes them) as a root of
  * the system's Files app, so logs can be read and saves backed up without a computer. Taken from
  * LessUnderRated's Chronicle-rs ChronicleDocumentsProvider, itself adapted from doukutsu-rs's
- * DoukutsuDocumentsProvider (MIT; THIRD_PARTY_NOTICES.md). A document's id is its canonical path, and
+ * DoukutsuDocumentsProvider (MIT; THIRD_PARTY_NOTICES.txt). A document's id is its canonical path, and
  * only paths inside the app's files directory are served. The imported game data lives in the
  * external files directory instead (SetupActivity) and is not served here.
  */
